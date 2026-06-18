@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific data
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# Xcode build output
+DerivedData/
+build/
+.build/
+.build-*/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Obsolete nested Xcode project (use /EyeTrainer.xcodeproj)
+EyeTrainer/EyeTrainer.xcodeproj/
+
+# Swift Package Manager
+.swiftpm/
+
+# Temporary files
+*.swp
+*~

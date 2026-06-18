@@ -1,0 +1,317 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2D7EA6E16B826D8470BACE5D /* EyeTrainerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAF22AAA748C77B7A4E75AE; };
+		42CE032D4B4376A3ABEB4CF2 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F98BF222EC4B64D0BF1DB536; };
+		F5F3EBEAE499356E228E52A9 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 937038F1140971D9C0752583; };
+		EECB2A6CB8772E316B4D7AC5 /* FloatingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E433BB9F948F3B350B4D274; };
+		F13F26CB97B800C1BD75147F /* ManualControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 171AC8FCEDB220AA517C7A30; };
+		52C17B62376F09DF76DAD784 /* BrightnessSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FF9686B4BB4AF2A65DF77B2; };
+		3C60E2B6D322938BE07FAC6D /* CurveSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF646F6BE8547BC423AF376C; };
+		56E8E62A0D760E0BA091FBE7 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2F17610D115EDE177C6E936; };
+		5E07E2B2D76C67194FEB0B7A /* TrainingTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F12070A23CD06B0AD59DD0A; };
+		0D9D2E6233BE3D8D37F8153B /* HotkeyTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F72D3D38D86B0B25D97ABA5; };
+		315127E1747711B9D45F5317 /* NotificationTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC3F22BBA2625B6DE236E107; };
+		D34DB50641DD0C7DB5071076 /* AboutTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD8BB2099A518A5BD05CC7D; };
+		51620A16D11FC650EAA19F36 /* XPCBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1D93DDD48EDAB2DF15D2C84; };
+		9F9D1F324B2796D303E5D4DC /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B147CED66803060AA8EAC19F; };
+		DD87294C1766DB4C57BB7C1E /* TrainingSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84121D23B4E9DEE9545169E7; };
+		7DEDAFC1FE48B2A97CA64F8A /* TrainingSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84121D23B4E9DEE9545169E7; };
+		DE1FF7270BA70BB8C50E7FFB /* XPCProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF8B3D349B293DEA776B690; };
+		78C53FC0530699EC95919014 /* XPCProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF8B3D349B293DEA776B690; };
+		A59105B76EFD3CEF55197F90 /* BrightnessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 256FCE372F05A78337240E87; };
+		5512EFAA5A860A34F0FA3DF4 /* BrightnessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 256FCE372F05A78337240E87; };
+		7B60896031797070936C1F16 /* CurveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4110B5459988C7BB2A39C71F; };
+		CCEB813FDBDCBEC72A30AAF2 /* CurveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4110B5459988C7BB2A39C71F; };
+		05D08CAC7EAB8094A2969746 /* TimerDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10BE915D41BEE80FD07AA21; };
+		5ED3CD36697DFA77DF18F109 /* TimerDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10BE915D41BEE80FD07AA21; };
+		50937B78371EE5FD3CE5A3E5 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110992A014D1AB6DFDDB5008; };
+		7A4BD10BF62B3F8F5CE5CFB5 /* XPCServiceDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F88EDC9D6A4F4C3492A7022; };
+		34F92BB1B07E7AD377DCFA84 /* BrightnessXPC.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = 3D16785D96936245AB41CD9C; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		478EA8FD0A5EF33D476503D6 /* Embed XPC Services */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolderSpec = 16;
+			files = (
+				34F92BB1B07E7AD377DCFA84
+			);
+			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		AAAF22AAA748C77B7A4E75AE /* EyeTrainerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EyeTrainerApp.swift"; sourceTree = "<group>"; };
+		F98BF222EC4B64D0BF1DB536 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppViewModel.swift"; sourceTree = "<group>"; };
+		937038F1140971D9C0752583 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MenuBarView.swift"; sourceTree = "<group>"; };
+		2E433BB9F948F3B350B4D274 /* FloatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FloatingPanel.swift"; sourceTree = "<group>"; };
+		171AC8FCEDB220AA517C7A30 /* ManualControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ManualControlView.swift"; sourceTree = "<group>"; };
+		9FF9686B4BB4AF2A65DF77B2 /* BrightnessSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrightnessSlider.swift"; sourceTree = "<group>"; };
+		FF646F6BE8547BC423AF376C /* CurveSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CurveSelector.swift"; sourceTree = "<group>"; };
+		D2F17610D115EDE177C6E936 /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SettingsWindow.swift"; sourceTree = "<group>"; };
+		1F12070A23CD06B0AD59DD0A /* TrainingTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TrainingTab.swift"; sourceTree = "<group>"; };
+		5F72D3D38D86B0B25D97ABA5 /* HotkeyTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HotkeyTab.swift"; sourceTree = "<group>"; };
+		FC3F22BBA2625B6DE236E107 /* NotificationTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NotificationTab.swift"; sourceTree = "<group>"; };
+		FFD8BB2099A518A5BD05CC7D /* AboutTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AboutTab.swift"; sourceTree = "<group>"; };
+		E1D93DDD48EDAB2DF15D2C84 /* XPCBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "XPCBridge.swift"; sourceTree = "<group>"; };
+		B147CED66803060AA8EAC19F /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HotkeyManager.swift"; sourceTree = "<group>"; };
+		5D3F4E2326D65CCAB116C4E3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info.plist"; sourceTree = "<group>"; };
+		84121D23B4E9DEE9545169E7 /* TrainingSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TrainingSettings.swift"; sourceTree = "<group>"; };
+		FBF8B3D349B293DEA776B690 /* XPCProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "XPCProtocol.swift"; sourceTree = "<group>"; };
+		256FCE372F05A78337240E87 /* BrightnessController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrightnessController.swift"; sourceTree = "<group>"; };
+		4110B5459988C7BB2A39C71F /* CurveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CurveEngine.swift"; sourceTree = "<group>"; };
+		A10BE915D41BEE80FD07AA21 /* TimerDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TimerDriver.swift"; sourceTree = "<group>"; };
+		110992A014D1AB6DFDDB5008 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "main.swift"; sourceTree = "<group>"; };
+		0F88EDC9D6A4F4C3492A7022 /* XPCServiceDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "XPCServiceDelegate.swift"; sourceTree = "<group>"; };
+		B4CC79A0D623D5DC4F6306A5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info.plist"; sourceTree = "<group>"; };
+		61948A594A58B5207C1D9413 /* EyeTrainer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = EyeTrainer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3D16785D96936245AB41CD9C /* BrightnessXPC.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; path = BrightnessXPC.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		9C2ECCECBF1BD235E17368F8 = {isa = PBXGroup; children = (94CD50586D9A0F2D3BA51D0D, 3E32B917B9BCF2AF72B9DA44, 04D338FA0006588DD5EC0E40, B157BC425EAA5DA43AF902E1); sourceTree = "<group>"; };
+		B157BC425EAA5DA43AF902E1 /* Products */ = {isa = PBXGroup; children = (61948A594A58B5207C1D9413, 3D16785D96936245AB41CD9C); name = Products; sourceTree = "<group>"; };
+		94CD50586D9A0F2D3BA51D0D /* EyeTrainer */ = {isa = PBXGroup; children = (B711C8D13BD17D337A648E59); path = "EyeTrainer"; sourceTree = "<group>"; };
+		B711C8D13BD17D337A648E59 /* EyeTrainer */ = {isa = PBXGroup; children = (D18CFF1F6C2AC703BE7DCFD7, A3E59F5821BC1F524280434A, 4006930F902F9DCF58071C3A, 3BF869BA22EBCF6C98E9765E, F59D35B32405C20AE082BFAE, E596D0344223B750DEA6E6A7); path = "EyeTrainer"; sourceTree = "<group>"; };
+		D18CFF1F6C2AC703BE7DCFD7 /* App */ = {isa = PBXGroup; children = (AAAF22AAA748C77B7A4E75AE); path = "App"; sourceTree = "<group>"; };
+		A3E59F5821BC1F524280434A /* ViewModel */ = {isa = PBXGroup; children = (F98BF222EC4B64D0BF1DB536); path = "ViewModel"; sourceTree = "<group>"; };
+		4006930F902F9DCF58071C3A /* Views */ = {isa = PBXGroup; children = (937038F1140971D9C0752583, 2E433BB9F948F3B350B4D274, 171AC8FCEDB220AA517C7A30, D72EDAFCFFA4C0279EEFAE29, AA3C46679D8C2477D0DAC94D); path = "Views"; sourceTree = "<group>"; };
+		D72EDAFCFFA4C0279EEFAE29 /* Components */ = {isa = PBXGroup; children = (9FF9686B4BB4AF2A65DF77B2, FF646F6BE8547BC423AF376C); path = "Components"; sourceTree = "<group>"; };
+		AA3C46679D8C2477D0DAC94D /* Settings */ = {isa = PBXGroup; children = (D2F17610D115EDE177C6E936, 1F12070A23CD06B0AD59DD0A, 5F72D3D38D86B0B25D97ABA5, FC3F22BBA2625B6DE236E107, FFD8BB2099A518A5BD05CC7D); path = "Settings"; sourceTree = "<group>"; };
+		3BF869BA22EBCF6C98E9765E /* Services */ = {isa = PBXGroup; children = (E1D93DDD48EDAB2DF15D2C84, B147CED66803060AA8EAC19F); path = "Services"; sourceTree = "<group>"; };
+		F59D35B32405C20AE082BFAE /* Resources */ = {isa = PBXGroup; children = (5D3F4E2326D65CCAB116C4E3); path = "Resources"; sourceTree = "<group>"; };
+		E596D0344223B750DEA6E6A7 /* Models */ = {isa = PBXGroup; children = (84121D23B4E9DEE9545169E7); path = "Models"; sourceTree = "<group>"; };
+		04D338FA0006588DD5EC0E40 /* Shared */ = {isa = PBXGroup; children = (FBF8B3D349B293DEA776B690); path = "Shared"; sourceTree = "<group>"; };
+		3E32B917B9BCF2AF72B9DA44 /* BrightnessXPC */ = {isa = PBXGroup; children = (256FCE372F05A78337240E87, 4110B5459988C7BB2A39C71F, A10BE915D41BEE80FD07AA21, 110992A014D1AB6DFDDB5008, 0F88EDC9D6A4F4C3492A7022, B4CC79A0D623D5DC4F6306A5); path = "BrightnessXPC"; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		71205B7AABC15E1B09FC541E /* EyeTrainer */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F2BA941B870B98C3AE021E84;
+			buildPhases = (
+				145C7AE0BFFDF4C03F479F43,
+				478EA8FD0A5EF33D476503D6
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = EyeTrainer;
+			productName = EyeTrainer;
+			productReference = 61948A594A58B5207C1D9413;
+			productType = "com.apple.product-type.application";
+		};
+		AFF5A2FF2DC12901D2ADA9FC /* BrightnessXPC */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 188D0B80F68B58F8EABBD5A4;
+			buildPhases = (
+				B5FDB65E255EB072B55E98F1
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BrightnessXPC;
+			productName = BrightnessXPC;
+			productReference = 3D16785D96936245AB41CD9C;
+			productType = "com.apple.product-type.xpc-service";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		83C8BF0F78CF5E44190A63D6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+			};
+			buildConfigurationList = 73574706841124C6944ABE9F;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			mainGroup = 9C2ECCECBF1BD235E17368F8;
+			productRefGroup = B157BC425EAA5DA43AF902E1;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				71205B7AABC15E1B09FC541E,
+				AFF5A2FF2DC12901D2ADA9FC
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		145C7AE0BFFDF4C03F479F43 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2D7EA6E16B826D8470BACE5D,
+				42CE032D4B4376A3ABEB4CF2,
+				F5F3EBEAE499356E228E52A9,
+				EECB2A6CB8772E316B4D7AC5,
+				F13F26CB97B800C1BD75147F,
+				52C17B62376F09DF76DAD784,
+				3C60E2B6D322938BE07FAC6D,
+				56E8E62A0D760E0BA091FBE7,
+				5E07E2B2D76C67194FEB0B7A,
+				0D9D2E6233BE3D8D37F8153B,
+				315127E1747711B9D45F5317,
+				D34DB50641DD0C7DB5071076,
+				51620A16D11FC650EAA19F36,
+				9F9D1F324B2796D303E5D4DC,
+				DD87294C1766DB4C57BB7C1E,
+				DE1FF7270BA70BB8C50E7FFB,
+				A59105B76EFD3CEF55197F90,
+				7B60896031797070936C1F16,
+				05D08CAC7EAB8094A2969746
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B5FDB65E255EB072B55E98F1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7DEDAFC1FE48B2A97CA64F8A,
+				78C53FC0530699EC95919014,
+				5512EFAA5A860A34F0FA3DF4,
+				CCEB813FDBDCBEC72A30AAF2,
+				5ED3CD36697DFA77DF18F109,
+				50937B78371EE5FD3CE5A3E5,
+				7A4BD10BF62B3F8F5CE5CFB5
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0C4EAD1B2D6DA67A3721BC75 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1","$(inherited)",);
+				INFOPLIST_FILE = EyeTrainer/EyeTrainer/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/../Frameworks",);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenquan.eye-trainer;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		BB9EA20FB6BA2A44DAA676EE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_OPTIMIZATION_LEVEL = s;
+				INFOPLIST_FILE = EyeTrainer/EyeTrainer/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/../Frameworks",);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenquan.eye-trainer;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		98696C819CB50AD3F9D4256D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = BrightnessXPC/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenquan.BrightnessXPC;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		E16D92468DF3B7D3A12B9208 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = BrightnessXPC/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wenquan.BrightnessXPC;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F2BA941B870B98C3AE021E84 /* Build configuration list for PBXNativeTarget "EyeTrainer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0C4EAD1B2D6DA67A3721BC75,
+				BB9EA20FB6BA2A44DAA676EE
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		188D0B80F68B58F8EABBD5A4 /* Build configuration list for PBXNativeTarget "BrightnessXPC" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				98696C819CB50AD3F9D4256D,
+				E16D92468DF3B7D3A12B9208
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		73574706841124C6944ABE9F /* Build configuration list for PBXNativeTarget "Project" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0C4EAD1B2D6DA67A3721BC75,
+				BB9EA20FB6BA2A44DAA676EE
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 83C8BF0F78CF5E44190A63D6 /* Project object */;
+}
