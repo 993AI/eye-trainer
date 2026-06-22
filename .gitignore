@@ -15,6 +15,7 @@ build/
 *.ipa
 *.dSYM.zip
 *.dSYM
+dist/
 
 # Obsolete nested Xcode project (use /EyeTrainer.xcodeproj)
 EyeTrainer/EyeTrainer.xcodeproj/
