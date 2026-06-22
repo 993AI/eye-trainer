@@ -14,7 +14,7 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
     private var currentStepLevels: Int = 4
     
     // 回调到主 App 的连接
-    private weak var clientConnection: NSXPCConnection?
+    private var clientConnection: NSXPCConnection?
     
     // MARK: - NSXPCListenerDelegate
     
@@ -26,8 +26,9 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
         clientConnection = newConnection
         
         newConnection.invalidationHandler = { [weak self] in
-            self?.timerDriver.stop()
-            self?.clientConnection = nil
+            guard let self, self.clientConnection === newConnection else { return }
+            self.timerDriver.stop()
+            self.clientConnection = nil
         }
         
         newConnection.resume()

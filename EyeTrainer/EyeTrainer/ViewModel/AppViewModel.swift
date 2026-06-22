@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AppKit
+import CoreGraphics
 
 /// 应用唯一状态中心
 @MainActor
@@ -55,7 +56,32 @@ final class AppViewModel {
         xpcBridge.onEvent = { [weak self] event in
             self?.handleXPCEvent(event)
         }
+        xpcBridge.onConnectionChange = { [weak self] connected in
+            self?.handleXPCConnectionChange(connected)
+        }
         xpcBridge.connect()
+    }
+
+    private func handleXPCConnectionChange(_ connected: Bool) {
+        guard isRunning, mode == .auto else { return }
+
+        if connected {
+            // 重连成功后交还给 XPC，并停止本地降级计时器。
+            fallbackTimer?.stop()
+            fallbackTimer = nil
+            xpcBridge.startTraining(XPCStartRequest(
+                mode: .auto,
+                curve: selectedCurve,
+                minBrightness: settings.minBrightness,
+                maxBrightness: settings.maxBrightness,
+                cycleSeconds: settings.cycleSeconds,
+                durationMinutes: settings.durationMinutes,
+                stepLevels: settings.stepLevels
+            ))
+        } else if fallbackTimer == nil {
+            // XPC 中断时立即由主进程继续训练，UI 与亮度都不会假运行。
+            startFallbackAuto()
+        }
     }
     
     private func handleXPCEvent(_ event: XPCEvent) {
@@ -326,11 +352,26 @@ final class AppViewModel {
 /// 这不会修改显示器 OSD 中的硬件亮度，但能可靠提供训练所需的明暗变化。
 @MainActor
 final class ScreenDimmingController {
+    private struct GammaFormula {
+        let redMin: CGGammaValue
+        let redMax: CGGammaValue
+        let redGamma: CGGammaValue
+        let greenMin: CGGammaValue
+        let greenMax: CGGammaValue
+        let greenGamma: CGGammaValue
+        let blueMin: CGGammaValue
+        let blueMax: CGGammaValue
+        let blueGamma: CGGammaValue
+    }
+
     private var overlayWindows: [NSWindow] = []
+    private var originalGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
     private var screenConfigurationSignature = ""
     private var screenChangeObserver: NSObjectProtocol?
+    private var activeSpaceChangeObserver: NSObjectProtocol?
     private var currentBrightness = 1.0
     private var isActive = false
+    private var isUsingGamma = false
 
     init() {
         screenChangeObserver = NotificationCenter.default.addObserver(
@@ -342,22 +383,39 @@ final class ScreenDimmingController {
                 self?.refreshForScreenChange()
             }
         }
+
+        activeSpaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshForActiveSpaceChange()
+            }
+        }
     }
 
     func setBrightness(_ value: Double) {
         currentBrightness = min(max(value, 0.05), 1.0)
         isActive = true
 
-        rebuildWindowsIfNeeded()
-        applyCurrentBrightness()
+        if applyGammaBrightness() {
+            isUsingGamma = true
+            hideOverlayWindows()
+        } else {
+            isUsingGamma = false
+            rebuildWindowsIfNeeded()
+            applyCurrentBrightness()
+        }
     }
 
     func restore() {
-        overlayWindows.forEach { $0.orderOut(nil) }
-        overlayWindows.removeAll()
+        restoreGammaBrightness()
+        hideOverlayWindows()
         screenConfigurationSignature = ""
         currentBrightness = 1.0
         isActive = false
+        isUsingGamma = false
     }
 
     private func rebuildWindowsIfNeeded() {
@@ -369,9 +427,9 @@ final class ScreenDimmingController {
         overlayWindows.removeAll()
 
         overlayWindows = screens.map { screen in
-            let window = NSWindow(
+            let window = NSPanel(
                 contentRect: screen.frame,
-                styleMask: .borderless,
+                styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
             )
@@ -380,7 +438,13 @@ final class ScreenDimmingController {
             window.hasShadow = false
             window.ignoresMouseEvents = true
             window.level = .screenSaver
-            window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            window.hidesOnDeactivate = false
+            window.collectionBehavior = [
+                .canJoinAllSpaces,
+                .fullScreenAuxiliary,
+                .stationary,
+                .ignoresCycle
+            ]
             return window
         }
         screenConfigurationSignature = signature
@@ -388,8 +452,21 @@ final class ScreenDimmingController {
 
     private func refreshForScreenChange() {
         guard isActive else { return }
-        rebuildWindowsIfNeeded()
+        setBrightness(currentBrightness)
+    }
+
+    private func refreshForActiveSpaceChange() {
+        guard isActive, !isUsingGamma else { return }
+
+        // Space/全屏切换由 WindowServer 分阶段完成；在切换完成后的几个时点
+        // 重新置顶，避免遮罩短暂留在旧 Space。
         applyCurrentBrightness()
+        for delay in [0.05, 0.15] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.isActive else { return }
+                self.applyCurrentBrightness()
+            }
+        }
     }
 
     private func applyCurrentBrightness() {
@@ -398,6 +475,96 @@ final class ScreenDimmingController {
             window.alphaValue = opacity
             window.orderFrontRegardless()
         }
+    }
+
+    /// 直接缩放显示输出的 RGB Gamma 范围。该方式不依赖窗口，切换 App、Space
+    /// 或全屏页面时不会短暂失去调光效果。
+    private func applyGammaBrightness() -> Bool {
+        let displayIDs = activeDisplayIDs()
+        guard !displayIDs.isEmpty else { return false }
+
+        let scale = CGGammaValue(currentBrightness)
+        for displayID in displayIDs {
+            guard let original = originalGammaByDisplay[displayID] ?? captureGamma(for: displayID) else {
+                restoreGammaBrightness()
+                return false
+            }
+            originalGammaByDisplay[displayID] = original
+
+            let result = CGSetDisplayTransferByFormula(
+                displayID,
+                original.redMin * scale,
+                original.redMax * scale,
+                original.redGamma,
+                original.greenMin * scale,
+                original.greenMax * scale,
+                original.greenGamma,
+                original.blueMin * scale,
+                original.blueMax * scale,
+                original.blueGamma
+            )
+            guard result == .success else {
+                restoreGammaBrightness()
+                return false
+            }
+        }
+        return true
+    }
+
+    private func captureGamma(for displayID: CGDirectDisplayID) -> GammaFormula? {
+        var redMin: CGGammaValue = 0
+        var redMax: CGGammaValue = 1
+        var redGamma: CGGammaValue = 1
+        var greenMin: CGGammaValue = 0
+        var greenMax: CGGammaValue = 1
+        var greenGamma: CGGammaValue = 1
+        var blueMin: CGGammaValue = 0
+        var blueMax: CGGammaValue = 1
+        var blueGamma: CGGammaValue = 1
+
+        let result = CGGetDisplayTransferByFormula(
+            displayID,
+            &redMin, &redMax, &redGamma,
+            &greenMin, &greenMax, &greenGamma,
+            &blueMin, &blueMax, &blueGamma
+        )
+        guard result == .success else { return nil }
+
+        return GammaFormula(
+            redMin: redMin,
+            redMax: redMax,
+            redGamma: redGamma,
+            greenMin: greenMin,
+            greenMax: greenMax,
+            greenGamma: greenGamma,
+            blueMin: blueMin,
+            blueMax: blueMax,
+            blueGamma: blueGamma
+        )
+    }
+
+    private func restoreGammaBrightness() {
+        for (displayID, original) in originalGammaByDisplay {
+            CGSetDisplayTransferByFormula(
+                displayID,
+                original.redMin, original.redMax, original.redGamma,
+                original.greenMin, original.greenMax, original.greenGamma,
+                original.blueMin, original.blueMax, original.blueGamma
+            )
+        }
+        originalGammaByDisplay.removeAll()
+    }
+
+    private func activeDisplayIDs() -> [CGDirectDisplayID] {
+        NSScreen.screens.compactMap { screen in
+            (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+        }
+    }
+
+    private func hideOverlayWindows() {
+        overlayWindows.forEach { $0.orderOut(nil) }
+        overlayWindows.removeAll()
+        screenConfigurationSignature = ""
     }
 
     private func configurationSignature(for screens: [NSScreen]) -> String {
@@ -416,6 +583,9 @@ final class ScreenDimmingController {
     deinit {
         if let screenChangeObserver {
             NotificationCenter.default.removeObserver(screenChangeObserver)
+        }
+        if let activeSpaceChangeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activeSpaceChangeObserver)
         }
     }
 }

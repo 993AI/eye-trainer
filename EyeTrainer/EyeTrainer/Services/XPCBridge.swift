@@ -10,14 +10,21 @@ final class XPCBridge: NSObject, XPCClientProtocol {
     
     private(set) var isConnected = false
     private var reconnectAttempts = 0
-    private let maxReconnectAttempts = 3
+    private var reconnectWorkItem: DispatchWorkItem?
     
     /// 事件回调
     var onEvent: ((XPCEvent) -> Void)?
+    var onConnectionChange: ((Bool) -> Void)?
     
     // MARK: - Connection Management
     
     func connect() {
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
+
+        // 主动替换连接时不要让旧连接的回调再次触发重连。
+        connection?.invalidationHandler = nil
+        connection?.interruptionHandler = nil
         connection?.invalidate()
         
         let conn = NSXPCConnection(
@@ -28,16 +35,19 @@ final class XPCBridge: NSObject, XPCClientProtocol {
         conn.exportedInterface = NSXPCInterface(with: XPCClientProtocol.self)
         conn.exportedObject = self
         
-        conn.invalidationHandler = { [weak self] in
+        conn.invalidationHandler = { [weak self, weak conn] in
             DispatchQueue.main.async {
-                self?.isConnected = false
-                self?.attemptReconnect()
+                guard let self, self.connection === conn else { return }
+                self.updateConnectionState(false)
+                self.attemptReconnect()
             }
         }
         
-        conn.interruptionHandler = { [weak self] in
+        conn.interruptionHandler = { [weak self, weak conn] in
             DispatchQueue.main.async {
-                self?.isConnected = false
+                guard let self, self.connection === conn else { return }
+                self.updateConnectionState(false)
+                self.attemptReconnect()
             }
         }
         
@@ -46,17 +56,19 @@ final class XPCBridge: NSObject, XPCClientProtocol {
         serviceProxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
             print("[XPCBridge] Connection error: \(error)")
             DispatchQueue.main.async {
-                self?.isConnected = false
+                self?.updateConnectionState(false)
+                self?.attemptReconnect()
             }
         } as? XPCServiceProtocol
         
         // 验证连接
         serviceProxy?.sendCommand(
             encodeRequest(.ping()) ?? Data(),
-            reply: { [weak self] _ in
+            reply: { [weak self, weak conn] _ in
                 DispatchQueue.main.async {
-                    self?.isConnected = true
-                    self?.reconnectAttempts = 0
+                    guard let self, self.connection === conn else { return }
+                    self.updateConnectionState(true)
+                    self.reconnectAttempts = 0
                 }
             }
         )
@@ -66,19 +78,31 @@ final class XPCBridge: NSObject, XPCClientProtocol {
         connection?.invalidate()
         connection = nil
         serviceProxy = nil
-        isConnected = false
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
+        updateConnectionState(false)
     }
     
     private func attemptReconnect() {
-        guard reconnectAttempts < maxReconnectAttempts else { return }
+        guard reconnectWorkItem == nil, !isConnected else { return }
         
         reconnectAttempts += 1
-        let delay: Double = [0.5, 1.0, 2.0][reconnectAttempts - 1]
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self = self, !self.isConnected else { return }
+        let delay = min(0.5 * pow(2.0, Double(reconnectAttempts - 1)), 30.0)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.reconnectWorkItem = nil
+            guard !self.isConnected else { return }
             self.connect()
         }
+        reconnectWorkItem = workItem
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func updateConnectionState(_ connected: Bool) {
+        guard isConnected != connected else { return }
+        isConnected = connected
+        onConnectionChange?(connected)
     }
     
     // MARK: - Sending Commands
