@@ -12,38 +12,55 @@ struct HotkeyTab: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
                 .textCase(.uppercase)
+
+            Toggle(isOn: $vm.globalHotkeysEnabled) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("启用全局快捷键")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("允许在其他应用处于前台时开始、停止训练或调节亮度")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+
+            Divider()
             
-            HotkeyRow(
-                label: "开始训练",
-                keyCode: $vm.settings.startHotkey.keyCode,
-                modifiers: $vm.settings.startHotkey.modifiers,
-                onChanged: { viewModel.reregisterHotkeys() }
-            )
-            
-            HotkeyRow(
-                label: "停止训练",
-                keyCode: $vm.settings.stopHotkey.keyCode,
-                modifiers: $vm.settings.stopHotkey.modifiers,
-                onChanged: { viewModel.reregisterHotkeys() }
-            )
-            
-            HotkeyRow(
-                label: "亮度 +",
-                keyCode: $vm.settings.upHotkey.keyCode,
-                modifiers: $vm.settings.upHotkey.modifiers,
-                onChanged: { viewModel.reregisterHotkeys() }
-            )
-            
-            HotkeyRow(
-                label: "亮度 -",
-                keyCode: $vm.settings.downHotkey.keyCode,
-                modifiers: $vm.settings.downHotkey.modifiers,
-                onChanged: { viewModel.reregisterHotkeys() }
-            )
-            
-            Text("点击右侧按钮录制新快捷键")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 18) {
+                HotkeyRow(
+                    label: "开始训练",
+                    keyCode: $vm.settings.startHotkey.keyCode,
+                    modifiers: $vm.settings.startHotkey.modifiers,
+                    onChanged: { viewModel.reregisterHotkeys() }
+                )
+
+                HotkeyRow(
+                    label: "停止训练",
+                    keyCode: $vm.settings.stopHotkey.keyCode,
+                    modifiers: $vm.settings.stopHotkey.modifiers,
+                    onChanged: { viewModel.reregisterHotkeys() }
+                )
+
+                HotkeyRow(
+                    label: "亮度 +",
+                    keyCode: $vm.settings.upHotkey.keyCode,
+                    modifiers: $vm.settings.upHotkey.modifiers,
+                    onChanged: { viewModel.reregisterHotkeys() }
+                )
+
+                HotkeyRow(
+                    label: "亮度 -",
+                    keyCode: $vm.settings.downHotkey.keyCode,
+                    modifiers: $vm.settings.downHotkey.modifiers,
+                    onChanged: { viewModel.reregisterHotkeys() }
+                )
+
+                Text("点击右侧按钮录制新快捷键")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .disabled(!vm.globalHotkeysEnabled)
+            .opacity(vm.globalHotkeysEnabled ? 1 : 0.45)
             
             Spacer()
         }

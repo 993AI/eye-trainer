@@ -8,6 +8,8 @@ import CoreGraphics
 @Observable
 final class AppViewModel {
     static let shared = AppViewModel()
+
+    private static let globalHotkeysEnabledKey = "globalHotkeysEnabled"
     
     // MARK: - Published State
     
@@ -17,6 +19,18 @@ final class AppViewModel {
     var remainingSeconds: Int = 0
     var selectedCurve: CurveType = .sine
     var isXPCConnected: Bool = false
+
+    var globalHotkeysEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(globalHotkeysEnabled, forKey: Self.globalHotkeysEnabledKey)
+
+            if globalHotkeysEnabled {
+                setupHotkeys()
+            } else {
+                hotkeyManager.unregisterAll()
+            }
+        }
+    }
     
     var settings: TrainingSettings {
         didSet {
@@ -43,6 +57,7 @@ final class AppViewModel {
     
     init() {
         self.settings = Self.loadSettings()
+        self.globalHotkeysEnabled = UserDefaults.standard.object(forKey: Self.globalHotkeysEnabledKey) as? Bool ?? true
         self.selectedCurve = settings.defaultCurve
         self.mode = settings.defaultMode
         
@@ -106,6 +121,9 @@ final class AppViewModel {
     // MARK: - Hotkey Setup
     
     private func setupHotkeys() {
+        guard globalHotkeysEnabled else { return }
+
+        hotkeyManager.unregisterAll()
         hotkeyManager.onHotkeyPressed = { [weak self] id in
             guard let self = self else { return }
             switch id {
@@ -146,7 +164,9 @@ final class AppViewModel {
     
     func reregisterHotkeys() {
         hotkeyManager.unregisterAll()
-        setupHotkeys()
+        if globalHotkeysEnabled {
+            setupHotkeys()
+        }
     }
 
     private func scheduleRunningTrainingUpdate() {
