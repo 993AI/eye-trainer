@@ -5,6 +5,7 @@ import Foundation
 enum XPCCommand: String, Codable {
     case start         = "start"
     case stop          = "stop"
+    case pause         = "pause"
     case setBrightness = "setBrightness"
     case ping          = "ping"
 }
@@ -17,6 +18,7 @@ struct XPCStartRequest: Codable {
     let cycleSeconds: Double
     let durationMinutes: Int?
     let stepLevels: Int
+    let initialElapsedSeconds: Double
 }
 
 struct XPCSetBrightnessRequest: Codable {
@@ -35,6 +37,10 @@ struct XPCRequest: Codable {
     
     static func stop() -> XPCRequest {
         XPCRequest(id: UUID(), command: .stop, startRequest: nil, setBrightnessRequest: nil)
+    }
+
+    static func pause() -> XPCRequest {
+        XPCRequest(id: UUID(), command: .pause, startRequest: nil, setBrightnessRequest: nil)
     }
     
     static func setBrightness(_ value: Double) -> XPCRequest {
@@ -57,6 +63,7 @@ enum XPCEventType: String, Codable {
 struct XPCTickEvent: Codable {
     let currentBrightness: Double   // 当前亮度值 0.0~1.0
     let remainingSeconds: Int       // 剩余训练秒数
+    let elapsedSeconds: Double      // 已运行秒数，用于断线/唤醒后续接
 }
 
 struct XPCErrorEvent: Codable {
@@ -70,8 +77,13 @@ struct XPCEvent: Codable {
     let tick: XPCTickEvent?
     let error: XPCErrorEvent?
     
-    static func tick(brightness: Double, remaining: Int) -> XPCEvent {
-        XPCEvent(id: UUID(), type: .tick, tick: XPCTickEvent(currentBrightness: brightness, remainingSeconds: remaining), error: nil)
+    static func tick(brightness: Double, elapsed: Double, remaining: Int) -> XPCEvent {
+        XPCEvent(
+            id: UUID(),
+            type: .tick,
+            tick: XPCTickEvent(currentBrightness: brightness, remainingSeconds: remaining, elapsedSeconds: elapsed),
+            error: nil
+        )
     }
     
     static func completed() -> XPCEvent {

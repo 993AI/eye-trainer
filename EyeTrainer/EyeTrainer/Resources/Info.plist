@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>练眼</string>
+	<string>EyeTrainer</string>
 	<key>CFBundleExecutable</key>
 	<string>EyeTrainer</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.wenquan.eye-trainer</string>
 	<key>CFBundleName</key>
-	<string>练眼</string>
+	<string>EyeTrainer</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

@@ -3,7 +3,6 @@ import Foundation
 /// XPC Service 委托：接收命令，驱动引擎，回传事件
 final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProtocol {
     
-    private let brightnessController = BrightnessController.shared
     private let timerDriver = TimerDriver()
     
     // 当前训练状态
@@ -15,6 +14,9 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
     
     // 回调到主 App 的连接
     private var clientConnection: NSXPCConnection?
+    private var clientProxy: XPCClientProtocol?
+    private let minimumTickInterval: Double = 1.0 / 30.0
+    private var lastSentTickElapsed: Double?
     
     // MARK: - NSXPCListenerDelegate
     
@@ -24,11 +26,23 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
         
         newConnection.remoteObjectInterface = NSXPCInterface(with: XPCClientProtocol.self)
         clientConnection = newConnection
+        clientProxy = newConnection.remoteObjectProxyWithErrorHandler { error in
+            print("[BrightnessXPC] Failed to send event: \(error)")
+        } as? XPCClientProtocol
         
         newConnection.invalidationHandler = { [weak self] in
             guard let self, self.clientConnection === newConnection else { return }
             self.timerDriver.stop()
             self.clientConnection = nil
+            self.clientProxy = nil
+        }
+
+        newConnection.interruptionHandler = { [weak self] in
+            guard let self, self.clientConnection === newConnection else { return }
+            // 中断期间由主 App 的降级计时器接管，避免两个计时器同时运行。
+            self.timerDriver.stop()
+            self.clientConnection = nil
+            self.clientProxy = nil
         }
         
         newConnection.resume()
@@ -54,6 +68,9 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
             
         case .stop:
             handleStop(reply: reply)
+
+        case .pause:
+            handlePause(reply: reply)
             
         case .setBrightness:
             guard let setReq = request.setBrightnessRequest else {
@@ -77,6 +94,7 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
         currentStepLevels = req.stepLevels
         
         let duration: Double? = req.durationMinutes.map { Double($0) * 60.0 }
+        lastSentTickElapsed = nil
         
         timerDriver.onTick = { [weak self] cycleT, elapsed, remaining in
             guard let self = self else { return }
@@ -90,51 +108,66 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
                 stepLevels: self.currentStepLevels
             )
             
-            self.brightnessController.setBrightness(brightness)
-            self.sendEventToClient(.tick(brightness: brightness, remaining: remaining))
+            let shouldSend = self.lastSentTickElapsed.map {
+                elapsed - $0 >= self.minimumTickInterval
+            } ?? true
+            guard shouldSend else { return }
+
+            self.lastSentTickElapsed = elapsed
+            self.sendEventToClient(.tick(brightness: brightness, elapsed: elapsed, remaining: remaining))
         }
         
         timerDriver.onCompleted = { [weak self] in
             self?.sendEventToClient(.completed())
         }
         
-        timerDriver.start(cycleSeconds: req.cycleSeconds, durationSeconds: duration)
+        timerDriver.start(
+            cycleSeconds: req.cycleSeconds,
+            durationSeconds: duration,
+            initialElapsedSeconds: req.initialElapsedSeconds
+        )
         
         // 立即回传初始亮度
+        let initialCycleTime = req.initialElapsedSeconds.truncatingRemainder(dividingBy: req.cycleSeconds)
         let initBrightness = CurveEngine.calculate(
             curve: currentCurve,
-            t: 0,
+            t: initialCycleTime,
             minBrightness: currentMinBrightness,
             maxBrightness: currentMaxBrightness,
             cycleSeconds: currentCycleSeconds,
             stepLevels: currentStepLevels
         )
-        brightnessController.setBrightness(initBrightness)
-        reply(encodeEvent(.tick(brightness: initBrightness, remaining: duration.map { Int($0) } ?? -1)))
+        lastSentTickElapsed = req.initialElapsedSeconds
+        reply(encodeEvent(.tick(
+            brightness: initBrightness,
+            elapsed: req.initialElapsedSeconds,
+            remaining: duration.map { max(0, Int($0) - Int(req.initialElapsedSeconds)) } ?? -1
+        )))
     }
     
     private func handleStop(reply: @escaping (Data?) -> Void) {
         timerDriver.stop()
+        lastSentTickElapsed = nil
         reply(encodeEvent(.completed()))
+    }
+
+    private func handlePause(reply: @escaping (Data?) -> Void) {
+        timerDriver.stop()
+        lastSentTickElapsed = nil
+        reply(nil)
     }
     
     private func handleSetBrightness(_ value: Double, reply: @escaping (Data?) -> Void) {
         timerDriver.stop()  // 手动模式下停止定时器
-        brightnessController.setBrightness(value)
-        reply(encodeEvent(.tick(brightness: value, remaining: 0)))
+        lastSentTickElapsed = nil
+        reply(encodeEvent(.tick(brightness: value, elapsed: 0, remaining: 0)))
     }
     
     // MARK: - Helpers
     
     private func sendEventToClient(_ event: XPCEvent) {
         guard let data = try? JSONEncoder().encode(event) else { return }
-        clientConnection?.remoteObjectProxyWithErrorHandler { error in
-            print("[BrightnessXPC] Failed to send event: \(error)")
-        }
-        
-        if let proxy = clientConnection?.remoteObjectProxy as? XPCClientProtocol {
-            proxy.receiveEvent(data)
-        }
+        clientProxy?.receiveEvent(data)
     }
     
     private func encodeEvent(_ event: XPCEvent) -> Data? {

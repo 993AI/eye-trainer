@@ -26,3 +26,4 @@ EyeTrainer/EyeTrainer.xcodeproj/
 # Temporary files
 *.swp
 *~
+/.idea/

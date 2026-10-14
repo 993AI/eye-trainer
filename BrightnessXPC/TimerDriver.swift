@@ -4,7 +4,12 @@ import Foundation
 final class TimerDriver {
     
     private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "com.wenquan.eye-trainer.timer", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "com.wenquan.eye-trainer.timer", qos: .userInitiated)
+    private let timebase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
     
     private var startTime: UInt64 = 0
     private var durationSeconds: Double = 0
@@ -19,16 +24,19 @@ final class TimerDriver {
     
     // MARK: - Control
     
-    func start(cycleSeconds: Double, durationSeconds: Double? = nil) {
+    func start(cycleSeconds: Double, durationSeconds: Double? = nil, initialElapsedSeconds: Double = 0) {
         stop()
         
         self.cycleSeconds = cycleSeconds
         self.durationSeconds = durationSeconds ?? Double.infinity
-        self.startTime = mach_absolute_time()
+        let elapsed = max(0, initialElapsedSeconds)
+        let offsetTicks = UInt64(elapsed * 1e9 * Double(timebase.denom) / Double(timebase.numer))
+        let now = mach_absolute_time()
+        self.startTime = now >= offsetTicks ? now - offsetTicks : 0
         self.isRunning = true
         
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .microseconds(1000))
+        timer.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(4))
         
         timer.setEventHandler { [weak self] in
             self?.fireTick()
@@ -48,9 +56,6 @@ final class TimerDriver {
     
     private func fireTick() {
         guard isRunning else { return }
-        
-        var timebase = mach_timebase_info_data_t()
-        mach_timebase_info(&timebase)
         
         let elapsed = Double(mach_absolute_time() - startTime) * Double(timebase.numer) / Double(timebase.denom) / 1e9
         

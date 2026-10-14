@@ -52,6 +52,11 @@ final class AppViewModel {
     private var fallbackTimer: TimerDriver?
     private var fallbackCurveEngine = CurveEngine.self
     private var settingsUpdateWorkItem: DispatchWorkItem?
+    private var displayLifecycleObservers: [NSObjectProtocol] = []
+    private var displayIsSleeping = false
+    private var trainingElapsedSeconds = 0.0
+    private var fallbackGeneration = 0
+    private var wakeGeneration = 0
     
     // MARK: - Init
     
@@ -61,8 +66,94 @@ final class AppViewModel {
         self.selectedCurve = settings.defaultCurve
         self.mode = settings.defaultMode
         
+        setupDisplayLifecycleObservers()
         setupXPC()
         setupHotkeys()
+    }
+
+    private func setupDisplayLifecycleObservers() {
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        let sleepNotifications: [Notification.Name] = [
+            NSWorkspace.screensDidSleepNotification,
+            NSWorkspace.sessionDidResignActiveNotification
+        ]
+        let wakeNotifications: [Notification.Name] = [
+            NSWorkspace.screensDidWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification
+        ]
+
+        for name in sleepNotifications {
+            displayLifecycleObservers.append(
+                workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        self?.handleDisplaySleep()
+                    }
+                }
+            )
+        }
+
+        for name in wakeNotifications {
+            displayLifecycleObservers.append(
+                workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        self?.handleDisplayWake()
+                    }
+                }
+            )
+        }
+    }
+
+    private func handleDisplaySleep() {
+        guard !displayIsSleeping else { return }
+        displayIsSleeping = true
+        wakeGeneration += 1
+        stopFallbackTimer()
+        if mode == .auto, xpcBridge.isConnected {
+            xpcBridge.pauseTraining()
+        }
+        screenDimmingController.restore()
+    }
+
+    private func handleDisplayWake() {
+        guard displayIsSleeping else { return }
+        displayIsSleeping = false
+        wakeGeneration += 1
+        let generation = wakeGeneration
+
+        // WindowServer 在唤醒后需要一点时间重新枚举显示器；只在稳定后恢复一次，
+        // 避免两次可见的亮度重设造成闪烁。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self,
+                  generation == self.wakeGeneration,
+                  !self.displayIsSleeping,
+                  self.isRunning else { return }
+            self.reapplyBrightnessAfterWake()
+        }
+    }
+
+    private func reapplyBrightnessAfterWake() {
+        // 先恢复当前画面亮度，再重新对齐训练计时器；XPC 初始 tick 若相同会被输出节流合并。
+        screenDimmingController.setBrightness(
+            mode == .manual ? manualBrightness : currentBrightness,
+            force: true
+        )
+
+        if mode == .auto {
+            if xpcBridge.isConnected {
+                xpcBridge.startTraining(XPCStartRequest(
+                    mode: .auto,
+                    curve: selectedCurve,
+                    minBrightness: settings.minBrightness,
+                    maxBrightness: settings.maxBrightness,
+                    cycleSeconds: settings.cycleSeconds,
+                    durationMinutes: settings.durationMinutes,
+                    stepLevels: settings.stepLevels,
+                    initialElapsedSeconds: trainingElapsedSeconds
+                ))
+            } else if fallbackTimer == nil {
+                startFallbackAuto(initialElapsedSeconds: trainingElapsedSeconds)
+            }
+        }
     }
     
     // MARK: - XPC Setup
@@ -80,10 +171,16 @@ final class AppViewModel {
     private func handleXPCConnectionChange(_ connected: Bool) {
         guard isRunning, mode == .auto else { return }
 
+        if displayIsSleeping {
+            if !connected {
+                stopFallbackTimer()
+            }
+            return
+        }
+
         if connected {
             // 重连成功后交还给 XPC，并停止本地降级计时器。
-            fallbackTimer?.stop()
-            fallbackTimer = nil
+            stopFallbackTimer()
             xpcBridge.startTraining(XPCStartRequest(
                 mode: .auto,
                 curve: selectedCurve,
@@ -91,11 +188,12 @@ final class AppViewModel {
                 maxBrightness: settings.maxBrightness,
                 cycleSeconds: settings.cycleSeconds,
                 durationMinutes: settings.durationMinutes,
-                stepLevels: settings.stepLevels
+                stepLevels: settings.stepLevels,
+                initialElapsedSeconds: trainingElapsedSeconds
             ))
         } else if fallbackTimer == nil {
             // XPC 中断时立即由主进程继续训练，UI 与亮度都不会假运行。
-            startFallbackAuto()
+            startFallbackAuto(initialElapsedSeconds: trainingElapsedSeconds)
         }
     }
     
@@ -104,7 +202,10 @@ final class AppViewModel {
         case .tick:
             if let tick = event.tick {
                 currentBrightness = tick.currentBrightness
-                applyExternalDisplayFallback(tick.currentBrightness)
+                trainingElapsedSeconds = tick.elapsedSeconds
+                if !displayIsSleeping {
+                    screenDimmingController.setBrightness(tick.currentBrightness)
+                }
                 if tick.remainingSeconds >= 0 {
                     remainingSeconds = tick.remainingSeconds
                 }
@@ -195,18 +296,21 @@ final class AppViewModel {
                     maxBrightness: settings.maxBrightness,
                     cycleSeconds: settings.cycleSeconds,
                     durationMinutes: settings.durationMinutes,
-                    stepLevels: settings.stepLevels
+                    stepLevels: settings.stepLevels,
+                    initialElapsedSeconds: trainingElapsedSeconds
                 ))
             } else {
-                fallbackTimer?.stop()
-                startFallbackAuto()
+                stopFallbackTimer()
+                startFallbackAuto(initialElapsedSeconds: trainingElapsedSeconds)
             }
         } else {
-            fallbackTimer?.stop()
+            stopFallbackTimer()
             if xpcBridge.isConnected {
+                // 复用 setBrightness 命令停止 XPC 自动计时器；实际调光统一由主 App 完成。
                 xpcBridge.setBrightness(manualBrightness)
-            } else {
-                applyBrightnessDirectly(manualBrightness)
+            }
+            if !displayIsSleeping {
+                screenDimmingController.setBrightness(manualBrightness, force: true)
             }
         }
     }
@@ -219,6 +323,7 @@ final class AppViewModel {
         mode = settings.defaultMode
         selectedCurve = settings.defaultCurve
         isRunning = true
+        trainingElapsedSeconds = 0
         
         if mode == .auto {
             if xpcBridge.isConnected {
@@ -230,36 +335,37 @@ final class AppViewModel {
                     maxBrightness: settings.maxBrightness,
                     cycleSeconds: settings.cycleSeconds,
                     durationMinutes: settings.durationMinutes,
-                    stepLevels: settings.stepLevels
+                    stepLevels: settings.stepLevels,
+                    initialElapsedSeconds: 0
                 )
                 xpcBridge.startTraining(req)
             } else {
                 // 降级：本地直驱
-                startFallbackAuto()
+                startFallbackAuto(initialElapsedSeconds: 0)
             }
         } else {
             // 手动模式
             currentBrightness = manualBrightness
             if xpcBridge.isConnected {
                 xpcBridge.setBrightness(manualBrightness)
-            } else {
-                applyBrightnessDirectly(manualBrightness)
+            }
+            if !displayIsSleeping {
+                screenDimmingController.setBrightness(manualBrightness, force: true)
             }
         }
     }
     
     func stopTraining() {
         guard isRunning else { return }
-        
-        if xpcBridge.isConnected {
-            xpcBridge.stopTraining()
-        } else {
-            fallbackTimer?.stop()
-            fallbackTimer = nil
-        }
-        
+
+        let wasXPCConnected = xpcBridge.isConnected
         isRunning = false
         remainingSeconds = 0
+        trainingElapsedSeconds = 0
+        stopFallbackTimer()
+        if wasXPCConnected {
+            xpcBridge.stopTraining()
+        }
         screenDimmingController.restore()
     }
     
@@ -268,10 +374,8 @@ final class AppViewModel {
         guard isRunning, mode == .manual else { return }
         
         currentBrightness = manualBrightness
-        if xpcBridge.isConnected {
-            xpcBridge.setBrightness(manualBrightness)
-        } else {
-            applyBrightnessDirectly(manualBrightness)
+        if !displayIsSleeping {
+            screenDimmingController.setBrightness(manualBrightness, force: true)
         }
     }
     
@@ -289,23 +393,24 @@ final class AppViewModel {
         let midpoint = (settings.minBrightness + settings.maxBrightness) / 2.0
         let target = currentBrightness < midpoint ? settings.maxBrightness : settings.minBrightness
         
-        if xpcBridge.isConnected {
-            xpcBridge.setBrightness(target)
-        } else {
-            applyBrightnessDirectly(target)
+        if !displayIsSleeping {
+            screenDimmingController.setBrightness(target, force: true)
         }
         currentBrightness = target
     }
     
     // MARK: - Fallback (降级直驱)
     
-    private func startFallbackAuto() {
+    private func startFallbackAuto(initialElapsedSeconds: Double = 0) {
+        stopFallbackTimer()
+        let generation = fallbackGeneration
         let driver = TimerDriver()
         let duration: Double? = settings.durationMinutes.map { Double($0) * 60.0 }
         
         driver.onTick = { [weak self] cycleT, elapsed, remaining in
-            guard let self = self else { return }
-            
+            guard let self,
+                  generation == self.fallbackGeneration,
+                  !self.displayIsSleeping else { return }
             let brightness = CurveEngine.calculate(
                 curve: self.selectedCurve,
                 t: cycleT,
@@ -314,42 +419,29 @@ final class AppViewModel {
                 cycleSeconds: self.settings.cycleSeconds,
                 stepLevels: self.settings.stepLevels
             )
-            
-            self.applyBrightnessDirectly(brightness)
-            DispatchQueue.main.async {
-                self.currentBrightness = brightness
-                self.remainingSeconds = remaining
-            }
+            self.screenDimmingController.setBrightness(brightness)
+            self.currentBrightness = brightness
+            self.trainingElapsedSeconds = elapsed
+            self.remainingSeconds = remaining
         }
         
         driver.onCompleted = { [weak self] in
-            DispatchQueue.main.async {
-                self?.stopTraining()
-            }
+            guard let self, generation == self.fallbackGeneration else { return }
+            self.stopTraining()
         }
         
-        driver.start(cycleSeconds: settings.cycleSeconds, durationSeconds: duration)
+        driver.start(
+            cycleSeconds: settings.cycleSeconds,
+            durationSeconds: duration,
+            initialElapsedSeconds: initialElapsedSeconds
+        )
         fallbackTimer = driver
     }
-    
-    private func applyBrightnessDirectly(_ value: Double) {
-        if !BrightnessController.shared.isAvailable {
-            applyExternalDisplayFallback(value)
-            return
-        }
 
-        // 降级模式下直接调用 IOKit
-        // 通过启动一个轻量后台任务来避免阻塞主线程
-        DispatchQueue.global(qos: .userInteractive).async {
-            // 这里直接复用 XPC Service 层的 BrightnessController
-            // 在降级模式下，主 App 直接 link BrightnessXPC 的代码
-            BrightnessController.shared.setBrightness(value)
-        }
-    }
-
-    private func applyExternalDisplayFallback(_ value: Double) {
-        guard !BrightnessController.shared.isAvailable else { return }
-        screenDimmingController.setBrightness(value)
+    private func stopFallbackTimer() {
+        fallbackGeneration += 1
+        fallbackTimer?.stop()
+        fallbackTimer = nil
     }
     
     // MARK: - Settings Persistence
@@ -366,12 +458,18 @@ final class AppViewModel {
         }
         return settings
     }
+
 }
 
 /// 外接显示器不暴露 Apple 背光接口时，以鼠标穿透的黑色覆盖层模拟亮度。
 /// 这不会修改显示器 OSD 中的硬件亮度，但能可靠提供训练所需的明暗变化。
 @MainActor
 final class ScreenDimmingController {
+    private enum DimmingBackend: Equatable {
+        case gamma
+        case overlay
+    }
+
     private struct GammaFormula {
         let redMin: CGGammaValue
         let redMax: CGGammaValue
@@ -387,11 +485,23 @@ final class ScreenDimmingController {
     private var overlayWindows: [NSWindow] = []
     private var originalGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
     private var screenConfigurationSignature = ""
+    private var backend: DimmingBackend?
+    private var backendConfigurationSignature = ""
+    private var gammaFailureSignature: String?
     private var screenChangeObserver: NSObjectProtocol?
     private var activeSpaceChangeObserver: NSObjectProtocol?
     private var currentBrightness = 1.0
     private var isActive = false
-    private var isUsingGamma = false
+    private var overlayNeedsFront = false
+    private var lastAppliedBrightness: Double?
+    private var lastAppliedAt: TimeInterval = 0
+    private var outputUpdateScheduled = false
+    private var outputGeneration = 0
+
+    // 训练曲线仍由 TimerDriver 以 60 FPS 计算，但实际显示输出限制为 20 FPS，
+    // 避免每一帧重写 Gamma LUT 或触发 WindowServer 窗口合成。
+    private let minimumOutputInterval: TimeInterval = 1.0 / 20.0
+    private let minimumBrightnessDelta = 0.004
 
     init() {
         screenChangeObserver = NotificationCenter.default.addObserver(
@@ -415,27 +525,111 @@ final class ScreenDimmingController {
         }
     }
 
-    func setBrightness(_ value: Double) {
+    func setBrightness(_ value: Double, force: Bool = false) {
         currentBrightness = min(max(value, 0.05), 1.0)
         isActive = true
 
-        if applyGammaBrightness() {
-            isUsingGamma = true
-            hideOverlayWindows()
+        if force {
+            cancelPendingOutput()
+            applyBrightnessNow(bringOverlayToFront: true)
         } else {
-            isUsingGamma = false
-            rebuildWindowsIfNeeded()
-            applyCurrentBrightness()
+            requestBrightnessOutput()
         }
     }
 
     func restore() {
+        cancelPendingOutput()
         restoreGammaBrightness()
         hideOverlayWindows()
         screenConfigurationSignature = ""
+        backend = nil
+        backendConfigurationSignature = ""
+        gammaFailureSignature = nil
+        overlayNeedsFront = false
         currentBrightness = 1.0
         isActive = false
-        isUsingGamma = false
+        lastAppliedBrightness = nil
+        lastAppliedAt = 0
+    }
+
+    private func requestBrightnessOutput() {
+        guard isActive else { return }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        let changeIsLargeEnough = lastAppliedBrightness == nil
+            || abs(currentBrightness - (lastAppliedBrightness ?? currentBrightness)) >= minimumBrightnessDelta
+        guard changeIsLargeEnough else { return }
+
+        let timeSinceLastOutput = now - lastAppliedAt
+        if lastAppliedBrightness == nil || timeSinceLastOutput >= minimumOutputInterval {
+            applyBrightnessNow()
+            return
+        }
+
+        guard !outputUpdateScheduled else { return }
+        outputUpdateScheduled = true
+        let generation = outputGeneration
+        let delay = max(0, minimumOutputInterval - timeSinceLastOutput)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.outputGeneration == generation else { return }
+            self.outputUpdateScheduled = false
+            self.requestBrightnessOutput()
+        }
+    }
+
+    private func cancelPendingOutput() {
+        outputGeneration += 1
+        outputUpdateScheduled = false
+    }
+
+    private func applyBrightnessNow(bringOverlayToFront: Bool = false) {
+        guard isActive else { return }
+
+        ensureBackend()
+        switch backend {
+        case .gamma:
+            guard applyGammaBrightness() else {
+                // Gamma 在当前布局下失效后只切换一次到遮罩，避免每一帧重复探测。
+                gammaFailureSignature = backendConfigurationSignature
+                restoreGammaBrightness()
+                backend = .overlay
+                rebuildWindowsIfNeeded()
+                applyCurrentBrightness(bringToFront: true)
+                break
+            }
+        case .overlay:
+            rebuildWindowsIfNeeded()
+            applyCurrentBrightness(bringToFront: bringOverlayToFront)
+        case nil:
+            break
+        }
+
+        lastAppliedBrightness = currentBrightness
+        lastAppliedAt = ProcessInfo.processInfo.systemUptime
+    }
+
+    private func ensureBackend() {
+        let displaySignature = configurationSignature(for: NSScreen.screens)
+        guard backend == nil || backendConfigurationSignature != displaySignature else { return }
+
+        if backend == .gamma {
+            restoreGammaBrightness()
+        }
+        hideOverlayWindows()
+        screenConfigurationSignature = ""
+        backendConfigurationSignature = displaySignature
+
+        if gammaFailureSignature == displaySignature {
+            backend = .overlay
+        } else {
+            // 先固定选择 Gamma；真正写入时若失败，再切换到遮罩并缓存失败布局。
+            // 这样初始化时不会连续写两次 Gamma LUT。
+            backend = .gamma
+        }
+
+        if backend == .overlay {
+            rebuildWindowsIfNeeded()
+        }
     }
 
     private func rebuildWindowsIfNeeded() {
@@ -468,32 +662,40 @@ final class ScreenDimmingController {
             return window
         }
         screenConfigurationSignature = signature
+        overlayNeedsFront = true
     }
 
     private func refreshForScreenChange() {
         guard isActive else { return }
-        setBrightness(currentBrightness)
+        cancelPendingOutput()
+        backend = nil
+        backendConfigurationSignature = ""
+        gammaFailureSignature = nil
+        setBrightness(currentBrightness, force: true)
     }
 
     private func refreshForActiveSpaceChange() {
-        guard isActive, !isUsingGamma else { return }
+        guard isActive, backend == .overlay else { return }
 
-        // Space/全屏切换由 WindowServer 分阶段完成；在切换完成后的几个时点
-        // 重新置顶，避免遮罩短暂留在旧 Space。
-        applyCurrentBrightness()
-        for delay in [0.05, 0.15] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, self.isActive else { return }
-                self.applyCurrentBrightness()
-            }
+        // Space/全屏切换只在事件发生时重新置顶，训练 tick 不再触发窗口置顶。
+        applyCurrentBrightness(bringToFront: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.isActive, self.backend == .overlay else { return }
+            self.applyCurrentBrightness(bringToFront: true)
         }
     }
 
-    private func applyCurrentBrightness() {
+    private func applyCurrentBrightness(bringToFront: Bool = false) {
         let opacity = 1.0 - currentBrightness
+        let shouldBringToFront = bringToFront || overlayNeedsFront
         for window in overlayWindows {
             window.alphaValue = opacity
-            window.orderFrontRegardless()
+            if shouldBringToFront {
+                window.orderFrontRegardless()
+            }
+        }
+        if shouldBringToFront {
+            overlayNeedsFront = false
         }
     }
 
@@ -585,6 +787,7 @@ final class ScreenDimmingController {
         overlayWindows.forEach { $0.orderOut(nil) }
         overlayWindows.removeAll()
         screenConfigurationSignature = ""
+        overlayNeedsFront = false
     }
 
     private func configurationSignature(for screens: [NSScreen]) -> String {

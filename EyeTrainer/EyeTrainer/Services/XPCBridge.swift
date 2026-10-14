@@ -114,6 +114,10 @@ final class XPCBridge: NSObject, XPCClientProtocol {
     func stopTraining() {
         send(.stop())
     }
+
+    func pauseTraining() {
+        send(.pause())
+    }
     
     func setBrightness(_ value: Double) {
         send(.setBrightness(value))
