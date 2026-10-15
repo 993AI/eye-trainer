@@ -33,7 +33,7 @@ struct EyeTrainerApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultSize(width: 300, height: 180)
+        .defaultSize(width: 300, height: 250)
     }
 }
 

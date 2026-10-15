@@ -13,8 +13,14 @@ enum XPCCommand: String, Codable {
 struct XPCStartRequest: Codable {
     let mode: TrainingMode
     let curve: CurveType
+    let target: TrainingTarget
+    let transitionStyle: TransitionStyle
     let minBrightness: Double
     let maxBrightness: Double
+    let minColorTemperature: Double
+    let maxColorTemperature: Double
+    let fixedBrightness: Double
+    let fixedColorTemperature: Double
     let cycleSeconds: Double
     let durationMinutes: Int?
     let stepLevels: Int
@@ -23,6 +29,7 @@ struct XPCStartRequest: Codable {
 
 struct XPCSetBrightnessRequest: Codable {
     let value: Double   // 0.0 ~ 1.0
+    let colorTemperature: Double?
 }
 
 struct XPCRequest: Codable {
@@ -44,7 +51,16 @@ struct XPCRequest: Codable {
     }
     
     static func setBrightness(_ value: Double) -> XPCRequest {
-        XPCRequest(id: UUID(), command: .setBrightness, startRequest: nil, setBrightnessRequest: XPCSetBrightnessRequest(value: value))
+        XPCRequest(id: UUID(), command: .setBrightness, startRequest: nil, setBrightnessRequest: XPCSetBrightnessRequest(value: value, colorTemperature: nil))
+    }
+
+    static func setDisplayState(_ brightness: Double, colorTemperature: Double) -> XPCRequest {
+        XPCRequest(
+            id: UUID(),
+            command: .setBrightness,
+            startRequest: nil,
+            setBrightnessRequest: XPCSetBrightnessRequest(value: brightness, colorTemperature: colorTemperature)
+        )
     }
     
     static func ping() -> XPCRequest {
@@ -62,6 +78,7 @@ enum XPCEventType: String, Codable {
 
 struct XPCTickEvent: Codable {
     let currentBrightness: Double   // 当前亮度值 0.0~1.0
+    let currentColorTemperature: Double
     let remainingSeconds: Int       // 剩余训练秒数
     let elapsedSeconds: Double      // 已运行秒数，用于断线/唤醒后续接
 }
@@ -77,11 +94,11 @@ struct XPCEvent: Codable {
     let tick: XPCTickEvent?
     let error: XPCErrorEvent?
     
-    static func tick(brightness: Double, elapsed: Double, remaining: Int) -> XPCEvent {
+    static func tick(brightness: Double, colorTemperature: Double = 6500, elapsed: Double, remaining: Int) -> XPCEvent {
         XPCEvent(
             id: UUID(),
             type: .tick,
-            tick: XPCTickEvent(currentBrightness: brightness, remainingSeconds: remaining, elapsedSeconds: elapsed),
+            tick: XPCTickEvent(currentBrightness: brightness, currentColorTemperature: colorTemperature, remainingSeconds: remaining, elapsedSeconds: elapsed),
             error: nil
         )
     }

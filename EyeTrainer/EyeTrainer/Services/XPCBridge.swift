@@ -122,6 +122,10 @@ final class XPCBridge: NSObject, XPCClientProtocol {
     func setBrightness(_ value: Double) {
         send(.setBrightness(value))
     }
+
+    func setDisplayState(_ brightness: Double, colorTemperature: Double) {
+        send(.setDisplayState(brightness, colorTemperature: colorTemperature))
+    }
     
     private func send(_ request: XPCRequest) {
         guard let data = encodeRequest(request) else { return }

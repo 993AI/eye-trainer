@@ -3,10 +3,9 @@ import SwiftUI
 /// 手动模式控制窗口
 struct ManualControlView: View {
     @Environment(AppViewModel.self) private var viewModel
-    @State private var sliderValue: Double = 0.5
     
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             Text("手动亮度控制")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
@@ -14,14 +13,33 @@ struct ManualControlView: View {
             
             BrightnessSlider(
                 value: Binding(
-                    get: { sliderValue },
+                    get: { viewModel.manualBrightness },
                     set: { newValue in
-                        sliderValue = newValue
                         viewModel.setManualBrightness(newValue)
                     }
                 ),
-                size: 240
+                size: 220
             )
+
+            VStack(spacing: 4) {
+                HStack {
+                    Text("🌡 色温")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int(viewModel.manualColorTemperature))K")
+                        .font(.callout)
+                        .foregroundColor(.orange)
+                }
+                Slider(
+                    value: Binding(
+                        get: { viewModel.manualColorTemperature },
+                        set: { viewModel.setManualColorTemperature($0) }
+                    ),
+                    in: 1000...10000,
+                    step: 100
+                )
+            }
             
             HStack(spacing: 12) {
                 Button { viewModel.adjustBrightness(up: true) } label: {
@@ -35,10 +53,16 @@ struct ManualControlView: View {
                         .font(.title2)
                 }
                 .buttonStyle(.plain)
+
+                Button { viewModel.resetManualDisplay() } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(20)
-        .frame(width: 300, height: 180)
+        .frame(width: 300, height: 250)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
     }
 }

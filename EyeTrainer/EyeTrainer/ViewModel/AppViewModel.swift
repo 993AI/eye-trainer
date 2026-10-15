@@ -16,6 +16,7 @@ final class AppViewModel {
     var mode: TrainingMode = .auto
     var isRunning: Bool = false
     var currentBrightness: Double = 0.5
+    var currentColorTemperature: Double = 6500
     var remainingSeconds: Int = 0
     var selectedCurve: CurveType = .sine
     var isXPCConnected: Bool = false
@@ -41,6 +42,7 @@ final class AppViewModel {
     
     // 手动模式下的滑块值
     var manualBrightness: Double = 0.5
+    var manualColorTemperature: Double = 6500
     
     // MARK: - Services
     
@@ -50,7 +52,6 @@ final class AppViewModel {
     
     // 降级模式下的本地引擎（当 XPC 不可用时）
     private var fallbackTimer: TimerDriver?
-    private var fallbackCurveEngine = CurveEngine.self
     private var settingsUpdateWorkItem: DispatchWorkItem?
     private var displayLifecycleObservers: [NSObjectProtocol] = []
     private var displayIsSleeping = false
@@ -65,6 +66,7 @@ final class AppViewModel {
         self.globalHotkeysEnabled = UserDefaults.standard.object(forKey: Self.globalHotkeysEnabledKey) as? Bool ?? true
         self.selectedCurve = settings.defaultCurve
         self.mode = settings.defaultMode
+        self.manualColorTemperature = settings.manualColorTemperature
         
         setupDisplayLifecycleObservers()
         setupXPC()
@@ -150,24 +152,16 @@ final class AppViewModel {
 
     private func reapplyBrightnessAfterWake() {
         // 先恢复当前画面亮度，再重新对齐训练计时器；XPC 初始 tick 若相同会被输出节流合并。
-        screenDimmingController.setBrightness(
+        screenDimmingController.setDisplayState(
             mode == .manual ? manualBrightness : currentBrightness,
+            colorTemperature: mode == .manual ? manualColorTemperature : currentColorTemperature,
             force: true
         )
         displayIsSleeping = false
 
         if mode == .auto {
             if xpcBridge.isConnected {
-                xpcBridge.startTraining(XPCStartRequest(
-                    mode: .auto,
-                    curve: selectedCurve,
-                    minBrightness: settings.minBrightness,
-                    maxBrightness: settings.maxBrightness,
-                    cycleSeconds: settings.cycleSeconds,
-                    durationMinutes: settings.durationMinutes,
-                    stepLevels: settings.stepLevels,
-                    initialElapsedSeconds: trainingElapsedSeconds
-                ))
+                xpcBridge.startTraining(makeStartRequest(initialElapsedSeconds: trainingElapsedSeconds))
             } else if fallbackTimer == nil {
                 startFallbackAuto(initialElapsedSeconds: trainingElapsedSeconds)
             }
@@ -199,16 +193,7 @@ final class AppViewModel {
         if connected {
             // 重连成功后交还给 XPC，并停止本地降级计时器。
             stopFallbackTimer()
-            xpcBridge.startTraining(XPCStartRequest(
-                mode: .auto,
-                curve: selectedCurve,
-                minBrightness: settings.minBrightness,
-                maxBrightness: settings.maxBrightness,
-                cycleSeconds: settings.cycleSeconds,
-                durationMinutes: settings.durationMinutes,
-                stepLevels: settings.stepLevels,
-                initialElapsedSeconds: trainingElapsedSeconds
-            ))
+            xpcBridge.startTraining(makeStartRequest(initialElapsedSeconds: trainingElapsedSeconds))
         } else if fallbackTimer == nil {
             // XPC 中断时立即由主进程继续训练，UI 与亮度都不会假运行。
             startFallbackAuto(initialElapsedSeconds: trainingElapsedSeconds)
@@ -220,11 +205,15 @@ final class AppViewModel {
         case .tick:
             if let tick = event.tick {
                 currentBrightness = tick.currentBrightness
+                currentColorTemperature = tick.currentColorTemperature
                 trainingElapsedSeconds = tick.elapsedSeconds
                 if !displayIsSleeping {
                     // 显示器可能在锁屏期间被拔掉，屏幕变化通知也可能延迟到第一条 tick 之后。
                     // setBrightness 会检测布局签名并在需要时强制重建后端。
-                    screenDimmingController.setBrightness(tick.currentBrightness)
+                    screenDimmingController.setDisplayState(
+                        tick.currentBrightness,
+                        colorTemperature: tick.currentColorTemperature
+                    )
                 }
                 if tick.remainingSeconds >= 0 {
                     remainingSeconds = tick.remainingSeconds
@@ -309,16 +298,7 @@ final class AppViewModel {
 
         if mode == .auto {
             if xpcBridge.isConnected {
-                xpcBridge.startTraining(XPCStartRequest(
-                    mode: .auto,
-                    curve: selectedCurve,
-                    minBrightness: settings.minBrightness,
-                    maxBrightness: settings.maxBrightness,
-                    cycleSeconds: settings.cycleSeconds,
-                    durationMinutes: settings.durationMinutes,
-                    stepLevels: settings.stepLevels,
-                    initialElapsedSeconds: trainingElapsedSeconds
-                ))
+                xpcBridge.startTraining(makeStartRequest(initialElapsedSeconds: trainingElapsedSeconds))
             } else {
                 stopFallbackTimer()
                 startFallbackAuto(initialElapsedSeconds: trainingElapsedSeconds)
@@ -327,10 +307,14 @@ final class AppViewModel {
             stopFallbackTimer()
             if xpcBridge.isConnected {
                 // 复用 setBrightness 命令停止 XPC 自动计时器；实际调光统一由主 App 完成。
-                xpcBridge.setBrightness(manualBrightness)
+                xpcBridge.setDisplayState(manualBrightness, colorTemperature: manualColorTemperature)
             }
             if !displayIsSleeping {
-                screenDimmingController.setBrightness(manualBrightness, force: true)
+                screenDimmingController.setDisplayState(
+                    manualBrightness,
+                    colorTemperature: manualColorTemperature,
+                    force: true
+                )
             }
         }
     }
@@ -344,21 +328,11 @@ final class AppViewModel {
         selectedCurve = settings.defaultCurve
         isRunning = true
         trainingElapsedSeconds = 0
+        manualColorTemperature = min(max(settings.manualColorTemperature, 1000), 10000)
         
         if mode == .auto {
             if xpcBridge.isConnected {
-                // XPC 模式
-                let req = XPCStartRequest(
-                    mode: .auto,
-                    curve: selectedCurve,
-                    minBrightness: settings.minBrightness,
-                    maxBrightness: settings.maxBrightness,
-                    cycleSeconds: settings.cycleSeconds,
-                    durationMinutes: settings.durationMinutes,
-                    stepLevels: settings.stepLevels,
-                    initialElapsedSeconds: 0
-                )
-                xpcBridge.startTraining(req)
+                xpcBridge.startTraining(makeStartRequest(initialElapsedSeconds: 0))
             } else {
                 // 降级：本地直驱
                 startFallbackAuto(initialElapsedSeconds: 0)
@@ -366,11 +340,16 @@ final class AppViewModel {
         } else {
             // 手动模式
             currentBrightness = manualBrightness
+            currentColorTemperature = manualColorTemperature
             if xpcBridge.isConnected {
-                xpcBridge.setBrightness(manualBrightness)
+                xpcBridge.setDisplayState(manualBrightness, colorTemperature: manualColorTemperature)
             }
             if !displayIsSleeping {
-                screenDimmingController.setBrightness(manualBrightness, force: true)
+                screenDimmingController.setDisplayState(
+                    manualBrightness,
+                    colorTemperature: manualColorTemperature,
+                    force: true
+                )
             }
         }
     }
@@ -395,7 +374,43 @@ final class AppViewModel {
         
         currentBrightness = manualBrightness
         if !displayIsSleeping {
-            screenDimmingController.setBrightness(manualBrightness, force: true)
+            screenDimmingController.setDisplayState(
+                manualBrightness,
+                colorTemperature: manualColorTemperature,
+                force: true
+            )
+        }
+    }
+
+    func setManualColorTemperature(_ value: Double) {
+        manualColorTemperature = min(max(value, 1000), 10000)
+        settings.manualColorTemperature = manualColorTemperature
+        guard isRunning, mode == .manual else { return }
+
+        currentColorTemperature = manualColorTemperature
+        if !displayIsSleeping {
+            screenDimmingController.setDisplayState(
+                manualBrightness,
+                colorTemperature: manualColorTemperature,
+                force: true
+            )
+        }
+    }
+
+    func resetManualDisplay() {
+        manualBrightness = 0.5
+        manualColorTemperature = 6500
+        settings.manualColorTemperature = manualColorTemperature
+        guard isRunning, mode == .manual else { return }
+
+        currentBrightness = manualBrightness
+        currentColorTemperature = manualColorTemperature
+        if !displayIsSleeping {
+            screenDimmingController.setDisplayState(
+                manualBrightness,
+                colorTemperature: manualColorTemperature,
+                force: true
+            )
         }
     }
     
@@ -411,12 +426,25 @@ final class AppViewModel {
         // 跳到下一个半周期终点
         // 简单实现：跳到极值（如果当前 < 中点，跳到 max；否则跳到 min）
         let midpoint = (settings.minBrightness + settings.maxBrightness) / 2.0
-        let target = currentBrightness < midpoint ? settings.maxBrightness : settings.minBrightness
-        
+        let brightnessTarget = currentBrightness < midpoint ? settings.maxBrightness : settings.minBrightness
+        let temperatureMidpoint = (settings.minColorTemperature + settings.maxColorTemperature) / 2.0
+        let temperatureTarget = currentColorTemperature < temperatureMidpoint
+            ? settings.maxColorTemperature
+            : settings.minColorTemperature
+
         if !displayIsSleeping {
-            screenDimmingController.setBrightness(target, force: true)
+            screenDimmingController.setDisplayState(
+                settings.defaultTarget.includesBrightness ? brightnessTarget : currentBrightness,
+                colorTemperature: settings.defaultTarget.includesColorTemperature ? temperatureTarget : currentColorTemperature,
+                force: true
+            )
         }
-        currentBrightness = target
+        if settings.defaultTarget.includesBrightness {
+            currentBrightness = brightnessTarget
+        }
+        if settings.defaultTarget.includesColorTemperature {
+            currentColorTemperature = temperatureTarget
+        }
     }
     
     // MARK: - Fallback (降级直驱)
@@ -431,16 +459,35 @@ final class AppViewModel {
             guard let self,
                   generation == self.fallbackGeneration,
                   !self.displayIsSleeping else { return }
-            let brightness = CurveEngine.calculate(
-                curve: self.selectedCurve,
-                t: cycleT,
-                minBrightness: self.settings.minBrightness,
-                maxBrightness: self.settings.maxBrightness,
-                cycleSeconds: self.settings.cycleSeconds,
-                stepLevels: self.settings.stepLevels
+            let target = self.settings.defaultTarget
+            let brightness = target.includesBrightness
+                ? CurveEngine.calculate(
+                    curve: self.selectedCurve,
+                    t: cycleT,
+                    minBrightness: self.settings.minBrightness,
+                    maxBrightness: self.settings.maxBrightness,
+                    cycleSeconds: self.settings.cycleSeconds,
+                    stepLevels: self.settings.stepLevels,
+                    transitionStyle: self.settings.transitionStyle
+                )
+                : 1.0
+            let colorTemperature = target.includesColorTemperature
+                ? CurveEngine.calculateColorTemperature(
+                    curve: self.selectedCurve,
+                    t: cycleT,
+                    minTemperature: self.settings.minColorTemperature,
+                    maxTemperature: self.settings.maxColorTemperature,
+                    cycleSeconds: self.settings.cycleSeconds,
+                    stepLevels: self.settings.stepLevels,
+                    transitionStyle: self.settings.transitionStyle
+                )
+                : 6500
+            self.screenDimmingController.setDisplayState(
+                brightness,
+                colorTemperature: colorTemperature
             )
-            self.screenDimmingController.setBrightness(brightness)
             self.currentBrightness = brightness
+            self.currentColorTemperature = colorTemperature
             self.trainingElapsedSeconds = elapsed
             self.remainingSeconds = remaining
         }
@@ -451,7 +498,7 @@ final class AppViewModel {
         }
         
         driver.start(
-            cycleSeconds: settings.cycleSeconds,
+            cycleSeconds: max(settings.cycleSeconds, 0.1),
             durationSeconds: duration,
             initialElapsedSeconds: initialElapsedSeconds
         )
@@ -462,6 +509,26 @@ final class AppViewModel {
         fallbackGeneration += 1
         fallbackTimer?.stop()
         fallbackTimer = nil
+    }
+
+    private func makeStartRequest(initialElapsedSeconds: Double) -> XPCStartRequest {
+        let target = settings.defaultTarget
+        return XPCStartRequest(
+            mode: .auto,
+            curve: selectedCurve,
+            target: target,
+            transitionStyle: settings.transitionStyle,
+            minBrightness: settings.minBrightness,
+            maxBrightness: settings.maxBrightness,
+            minColorTemperature: settings.minColorTemperature,
+            maxColorTemperature: settings.maxColorTemperature,
+            fixedBrightness: 1.0,
+            fixedColorTemperature: 6500,
+            cycleSeconds: max(settings.cycleSeconds, 0.1),
+            durationMinutes: settings.durationMinutes,
+            stepLevels: settings.stepLevels,
+            initialElapsedSeconds: initialElapsedSeconds
+        )
     }
     
     // MARK: - Settings Persistence
@@ -503,6 +570,7 @@ final class ScreenDimmingController {
     }
 
     private var overlayWindows: [NSWindow] = []
+    private var temperatureOverlayWindows: [NSWindow] = []
     private var originalGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
     // 锁屏前已经确认过的显示基准。解锁时优先复用它，避免把 WindowServer
     // 恢复过程中的临时暗态曲线采集成新的“正常”基准。
@@ -516,9 +584,11 @@ final class ScreenDimmingController {
     private var screenChangeObserver: NSObjectProtocol?
     private var activeSpaceChangeObserver: NSObjectProtocol?
     private var currentBrightness = 1.0
+    private var currentColorTemperature = 6500.0
     private var isActive = false
     private var overlayNeedsFront = false
     private var lastAppliedBrightness: Double?
+    private var lastAppliedColorTemperature: Double?
     private var lastAppliedAt: TimeInterval = 0
     private var outputUpdateScheduled = false
     private var outputGeneration = 0
@@ -527,6 +597,7 @@ final class ScreenDimmingController {
     // 避免每一帧重写 Gamma LUT 或触发 WindowServer 窗口合成。
     private let minimumOutputInterval: TimeInterval = 1.0 / 20.0
     private let minimumBrightnessDelta = 0.004
+    private let minimumColorTemperatureDelta = 8.0
 
     init() {
         screenChangeObserver = NotificationCenter.default.addObserver(
@@ -551,7 +622,16 @@ final class ScreenDimmingController {
     }
 
     func setBrightness(_ value: Double, force: Bool = false) {
-        currentBrightness = min(max(value, 0.05), 1.0)
+        setDisplayState(value, colorTemperature: currentColorTemperature, force: force)
+    }
+
+    func setDisplayState(
+        _ brightness: Double,
+        colorTemperature: Double,
+        force: Bool = false
+    ) {
+        currentBrightness = min(max(brightness, 0.05), 1.0)
+        currentColorTemperature = min(max(colorTemperature, 1000), 10000)
         isActive = true
 
         let displaySignature = configurationSignature(for: NSScreen.screens)
@@ -579,6 +659,7 @@ final class ScreenDimmingController {
         }
         invalidateDisplayConfiguration(preserveWakeRecovery: preserveWakeRecovery)
         currentBrightness = 1.0
+        currentColorTemperature = 6500
         isActive = false
     }
 
@@ -602,6 +683,7 @@ final class ScreenDimmingController {
         gammaFailureSignature = nil
         overlayNeedsFront = false
         lastAppliedBrightness = nil
+        lastAppliedColorTemperature = nil
         lastAppliedAt = 0
         if !preserveWakeRecovery && !wakeRecoveryPending {
             clearWakeRecovery()
@@ -620,8 +702,11 @@ final class ScreenDimmingController {
         guard isActive else { return }
 
         let now = ProcessInfo.processInfo.systemUptime
-        let changeIsLargeEnough = lastAppliedBrightness == nil
+        let brightnessChanged = lastAppliedBrightness == nil
             || abs(currentBrightness - (lastAppliedBrightness ?? currentBrightness)) >= minimumBrightnessDelta
+        let colorTemperatureChanged = lastAppliedColorTemperature == nil
+            || abs(currentColorTemperature - (lastAppliedColorTemperature ?? currentColorTemperature)) >= minimumColorTemperatureDelta
+        let changeIsLargeEnough = brightnessChanged || colorTemperatureChanged
         guard changeIsLargeEnough else { return }
 
         let timeSinceLastOutput = now - lastAppliedAt
@@ -669,6 +754,7 @@ final class ScreenDimmingController {
         }
 
         lastAppliedBrightness = currentBrightness
+        lastAppliedColorTemperature = currentColorTemperature
         lastAppliedAt = ProcessInfo.processInfo.systemUptime
     }
 
@@ -706,28 +792,15 @@ final class ScreenDimmingController {
         guard signature != screenConfigurationSignature else { return }
 
         overlayWindows.forEach { $0.orderOut(nil) }
+        temperatureOverlayWindows.forEach { $0.orderOut(nil) }
         overlayWindows.removeAll()
+        temperatureOverlayWindows.removeAll()
 
         overlayWindows = screens.map { screen in
-            let window = NSPanel(
-                contentRect: screen.frame,
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            window.backgroundColor = .black
-            window.isOpaque = true
-            window.hasShadow = false
-            window.ignoresMouseEvents = true
-            window.level = .screenSaver
-            window.hidesOnDeactivate = false
-            window.collectionBehavior = [
-                .canJoinAllSpaces,
-                .fullScreenAuxiliary,
-                .stationary,
-                .ignoresCycle
-            ]
-            return window
+            makeOverlayWindow(for: screen, backgroundColor: .black, opaque: true)
+        }
+        temperatureOverlayWindows = screens.map { screen in
+            makeOverlayWindow(for: screen, backgroundColor: .clear, opaque: false)
         }
         screenConfigurationSignature = signature
         overlayNeedsFront = true
@@ -752,9 +825,22 @@ final class ScreenDimmingController {
 
     private func applyCurrentBrightness(bringToFront: Bool = false) {
         let opacity = 1.0 - currentBrightness
+        let tint = ColorTemperatureEngine.overlayTint(for: currentColorTemperature)
         let shouldBringToFront = bringToFront || overlayNeedsFront
         for window in overlayWindows {
             window.alphaValue = opacity
+            if shouldBringToFront {
+                window.orderFrontRegardless()
+            }
+        }
+        for window in temperatureOverlayWindows {
+            window.backgroundColor = NSColor(
+                calibratedRed: tint.red,
+                green: tint.green,
+                blue: tint.blue,
+                alpha: 1
+            )
+            window.alphaValue = tint.strength
             if shouldBringToFront {
                 window.orderFrontRegardless()
             }
@@ -770,7 +856,8 @@ final class ScreenDimmingController {
         let displayIDs = activeDisplayIDs()
         guard !displayIDs.isEmpty else { return false }
 
-        let scale = CGGammaValue(currentBrightness)
+        let scale = currentBrightness
+        let temperature = ColorTemperatureEngine.multipliers(for: currentColorTemperature)
         for displayID in displayIDs {
             guard let original = originalGammaByDisplay[displayID]
                     ?? wakeRecoveryGammaByDisplay[displayID]
@@ -782,14 +869,14 @@ final class ScreenDimmingController {
 
             let result = CGSetDisplayTransferByFormula(
                 displayID,
-                original.redMin * scale,
-                original.redMax * scale,
+                gammaValue(original.redMin, multipliedBy: scale * temperature.red),
+                gammaValue(original.redMax, multipliedBy: scale * temperature.red),
                 original.redGamma,
-                original.greenMin * scale,
-                original.greenMax * scale,
+                gammaValue(original.greenMin, multipliedBy: scale * temperature.green),
+                gammaValue(original.greenMax, multipliedBy: scale * temperature.green),
                 original.greenGamma,
-                original.blueMin * scale,
-                original.blueMax * scale,
+                gammaValue(original.blueMin, multipliedBy: scale * temperature.blue),
+                gammaValue(original.blueMax, multipliedBy: scale * temperature.blue),
                 original.blueGamma
             )
             guard result == .success else {
@@ -798,6 +885,36 @@ final class ScreenDimmingController {
             }
         }
         return true
+    }
+
+    private func makeOverlayWindow(
+        for screen: NSScreen,
+        backgroundColor: NSColor,
+        opaque: Bool
+    ) -> NSWindow {
+        let window = NSPanel(
+            contentRect: screen.frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        window.backgroundColor = backgroundColor
+        window.isOpaque = opaque
+        window.hasShadow = false
+        window.ignoresMouseEvents = true
+        window.level = .screenSaver
+        window.hidesOnDeactivate = false
+        window.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .stationary,
+            .ignoresCycle
+        ]
+        return window
+    }
+
+    private func gammaValue(_ value: CGGammaValue, multipliedBy scale: Double) -> CGGammaValue {
+        CGGammaValue(min(max(Double(value) * scale, 0), 1))
     }
 
     private func captureGamma(for displayID: CGDirectDisplayID) -> GammaFormula? {
@@ -858,7 +975,9 @@ final class ScreenDimmingController {
 
     private func hideOverlayWindows() {
         overlayWindows.forEach { $0.orderOut(nil) }
+        temperatureOverlayWindows.forEach { $0.orderOut(nil) }
         overlayWindows.removeAll()
+        temperatureOverlayWindows.removeAll()
         screenConfigurationSignature = ""
         overlayNeedsFront = false
     }

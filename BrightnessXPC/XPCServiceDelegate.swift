@@ -7,8 +7,14 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
     
     // 当前训练状态
     private var currentCurve: CurveType = .sine
+    private var currentTarget: TrainingTarget = .brightness
+    private var currentTransitionStyle: TransitionStyle = .gradual
     private var currentMinBrightness: Double = 0.15
     private var currentMaxBrightness: Double = 0.90
+    private var currentMinColorTemperature: Double = 3000
+    private var currentMaxColorTemperature: Double = 8000
+    private var currentFixedBrightness: Double = 1.0
+    private var currentFixedColorTemperature: Double = 6500
     private var currentCycleSeconds: Double = 3.0
     private var currentStepLevels: Int = 4
     
@@ -77,7 +83,7 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
                 reply(encodeEvent(.error(code: 400, message: "Missing setBrightnessRequest")))
                 return
             }
-            handleSetBrightness(setReq.value, reply: reply)
+            handleSetBrightness(setReq.value, colorTemperature: setReq.colorTemperature, reply: reply)
             
         case .ping:
             reply(encodeEvent(.completed()))
@@ -88,8 +94,14 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
     
     private func handleStart(_ req: XPCStartRequest, reply: @escaping (Data?) -> Void) {
         currentCurve = req.curve
+        currentTarget = req.target
+        currentTransitionStyle = req.transitionStyle
         currentMinBrightness = req.minBrightness
         currentMaxBrightness = req.maxBrightness
+        currentMinColorTemperature = req.minColorTemperature
+        currentMaxColorTemperature = req.maxColorTemperature
+        currentFixedBrightness = req.fixedBrightness
+        currentFixedColorTemperature = req.fixedColorTemperature
         currentCycleSeconds = req.cycleSeconds
         currentStepLevels = req.stepLevels
         
@@ -99,14 +111,28 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
         timerDriver.onTick = { [weak self] cycleT, elapsed, remaining in
             guard let self = self else { return }
             
-            let brightness = CurveEngine.calculate(
-                curve: self.currentCurve,
-                t: cycleT,
-                minBrightness: self.currentMinBrightness,
-                maxBrightness: self.currentMaxBrightness,
-                cycleSeconds: self.currentCycleSeconds,
-                stepLevels: self.currentStepLevels
-            )
+            let brightness = self.currentTarget.includesBrightness
+                ? CurveEngine.calculate(
+                    curve: self.currentCurve,
+                    t: cycleT,
+                    minBrightness: self.currentMinBrightness,
+                    maxBrightness: self.currentMaxBrightness,
+                    cycleSeconds: self.currentCycleSeconds,
+                    stepLevels: self.currentStepLevels,
+                    transitionStyle: self.currentTransitionStyle
+                )
+                : self.currentFixedBrightness
+            let colorTemperature = self.currentTarget.includesColorTemperature
+                ? CurveEngine.calculateColorTemperature(
+                    curve: self.currentCurve,
+                    t: cycleT,
+                    minTemperature: self.currentMinColorTemperature,
+                    maxTemperature: self.currentMaxColorTemperature,
+                    cycleSeconds: self.currentCycleSeconds,
+                    stepLevels: self.currentStepLevels,
+                    transitionStyle: self.currentTransitionStyle
+                )
+                : self.currentFixedColorTemperature
             
             let shouldSend = self.lastSentTickElapsed.map {
                 elapsed - $0 >= self.minimumTickInterval
@@ -114,7 +140,7 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
             guard shouldSend else { return }
 
             self.lastSentTickElapsed = elapsed
-            self.sendEventToClient(.tick(brightness: brightness, elapsed: elapsed, remaining: remaining))
+            self.sendEventToClient(.tick(brightness: brightness, colorTemperature: colorTemperature, elapsed: elapsed, remaining: remaining))
         }
         
         timerDriver.onCompleted = { [weak self] in
@@ -129,17 +155,32 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
         
         // 立即回传初始亮度
         let initialCycleTime = req.initialElapsedSeconds.truncatingRemainder(dividingBy: req.cycleSeconds)
-        let initBrightness = CurveEngine.calculate(
-            curve: currentCurve,
-            t: initialCycleTime,
-            minBrightness: currentMinBrightness,
-            maxBrightness: currentMaxBrightness,
-            cycleSeconds: currentCycleSeconds,
-            stepLevels: currentStepLevels
-        )
+        let initBrightness = currentTarget.includesBrightness
+            ? CurveEngine.calculate(
+                curve: currentCurve,
+                t: initialCycleTime,
+                minBrightness: currentMinBrightness,
+                maxBrightness: currentMaxBrightness,
+                cycleSeconds: currentCycleSeconds,
+                stepLevels: currentStepLevels,
+                transitionStyle: currentTransitionStyle
+            )
+            : currentFixedBrightness
+        let initColorTemperature = currentTarget.includesColorTemperature
+            ? CurveEngine.calculateColorTemperature(
+                curve: currentCurve,
+                t: initialCycleTime,
+                minTemperature: currentMinColorTemperature,
+                maxTemperature: currentMaxColorTemperature,
+                cycleSeconds: currentCycleSeconds,
+                stepLevels: currentStepLevels,
+                transitionStyle: currentTransitionStyle
+            )
+            : currentFixedColorTemperature
         lastSentTickElapsed = req.initialElapsedSeconds
         reply(encodeEvent(.tick(
             brightness: initBrightness,
+            colorTemperature: initColorTemperature,
             elapsed: req.initialElapsedSeconds,
             remaining: duration.map { max(0, Int($0) - Int(req.initialElapsedSeconds)) } ?? -1
         )))
@@ -157,10 +198,10 @@ final class XPCServiceDelegate: NSObject, NSXPCListenerDelegate, XPCServiceProto
         reply(nil)
     }
     
-    private func handleSetBrightness(_ value: Double, reply: @escaping (Data?) -> Void) {
+    private func handleSetBrightness(_ value: Double, colorTemperature: Double?, reply: @escaping (Data?) -> Void) {
         timerDriver.stop()  // 手动模式下停止定时器
         lastSentTickElapsed = nil
-        reply(encodeEvent(.tick(brightness: value, elapsed: 0, remaining: 0)))
+        reply(encodeEvent(.tick(brightness: value, colorTemperature: colorTemperature ?? 6500, elapsed: 0, remaining: 0)))
     }
     
     // MARK: - Helpers

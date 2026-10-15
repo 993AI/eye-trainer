@@ -15,7 +15,7 @@ struct FloatingPanelView: View {
                         .font(.system(size: 12, weight: .semibold))
                     Text("·")
                         .foregroundColor(.secondary)
-                    Text(viewModel.selectedCurve.displayName)
+                    Text(viewModel.settings.transitionStyle.displayName)
                         .font(.system(size: 11))
                         .foregroundColor(.accentColor)
                 }
@@ -80,6 +80,21 @@ struct FloatingPanelView: View {
                 Text("\(Int(viewModel.currentBrightness * 100))%")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundColor(.white)
+
+                if viewModel.settings.defaultTarget.includesColorTemperature || viewModel.mode == .manual {
+                    HStack(spacing: 6) {
+                        Text("色温")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Text("\(Int(viewModel.currentColorTemperature))K")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.orange)
+                        Spacer()
+                        Text("\(Int(viewModel.settings.minColorTemperature))K – \(Int(viewModel.settings.maxColorTemperature))K")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .padding(14)
             
