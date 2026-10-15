@@ -115,19 +115,31 @@ final class AppViewModel {
     }
 
     private func handleDisplayWake() {
-        guard displayIsSleeping else { return }
+        // sessionDidBecomeActive 可能在 screensDidWake 之后重复到达；无论当前标记如何，
+        // 都要把显示器后端重新绑定到解锁后的实际屏幕列表。
         displayIsSleeping = false
         wakeGeneration += 1
         let generation = wakeGeneration
+        screenDimmingController.invalidateDisplayConfiguration()
 
-        // WindowServer 在唤醒后需要一点时间重新枚举显示器；只在稳定后恢复一次，
-        // 避免两次可见的亮度重设造成闪烁。
+        guard isRunning else { return }
+
+        // WindowServer 在唤醒后需要一点时间重新枚举显示器；先恢复一次，
+        // 再做一次无可见变化的布局检查，只有发现布局改变时才会再次写屏幕。
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
             guard let self,
                   generation == self.wakeGeneration,
                   !self.displayIsSleeping,
                   self.isRunning else { return }
             self.reapplyBrightnessAfterWake()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.95) { [weak self] in
+            guard let self,
+                  generation == self.wakeGeneration,
+                  !self.displayIsSleeping,
+                  self.isRunning else { return }
+            self.screenDimmingController.rebindIfDisplayConfigurationChanged()
         }
     }
 
@@ -204,6 +216,8 @@ final class AppViewModel {
                 currentBrightness = tick.currentBrightness
                 trainingElapsedSeconds = tick.elapsedSeconds
                 if !displayIsSleeping {
+                    // 显示器可能在锁屏期间被拔掉，屏幕变化通知也可能延迟到第一条 tick 之后。
+                    // setBrightness 会检测布局签名并在需要时强制重建后端。
                     screenDimmingController.setBrightness(tick.currentBrightness)
                 }
                 if tick.remainingSeconds >= 0 {
@@ -529,7 +543,14 @@ final class ScreenDimmingController {
         currentBrightness = min(max(value, 0.05), 1.0)
         isActive = true
 
-        if force {
+        let displaySignature = configurationSignature(for: NSScreen.screens)
+        let configurationChanged = backendConfigurationSignature != displaySignature
+        if configurationChanged,
+           backend != nil || !overlayWindows.isEmpty || !originalGammaByDisplay.isEmpty {
+            invalidateDisplayConfiguration()
+        }
+
+        if force || configurationChanged {
             cancelPendingOutput()
             applyBrightnessNow(bringOverlayToFront: true)
         } else {
@@ -538,6 +559,12 @@ final class ScreenDimmingController {
     }
 
     func restore() {
+        invalidateDisplayConfiguration()
+        currentBrightness = 1.0
+        isActive = false
+    }
+
+    func invalidateDisplayConfiguration() {
         cancelPendingOutput()
         restoreGammaBrightness()
         hideOverlayWindows()
@@ -546,10 +573,16 @@ final class ScreenDimmingController {
         backendConfigurationSignature = ""
         gammaFailureSignature = nil
         overlayNeedsFront = false
-        currentBrightness = 1.0
-        isActive = false
         lastAppliedBrightness = nil
         lastAppliedAt = 0
+    }
+
+    func rebindIfDisplayConfigurationChanged() {
+        guard isActive else { return }
+
+        let displaySignature = configurationSignature(for: NSScreen.screens)
+        guard backendConfigurationSignature != displaySignature else { return }
+        setBrightness(currentBrightness, force: true)
     }
 
     private func requestBrightnessOutput() {
@@ -666,11 +699,8 @@ final class ScreenDimmingController {
     }
 
     private func refreshForScreenChange() {
+        invalidateDisplayConfiguration()
         guard isActive else { return }
-        cancelPendingOutput()
-        backend = nil
-        backendConfigurationSignature = ""
-        gammaFailureSignature = nil
         setBrightness(currentBrightness, force: true)
     }
 
