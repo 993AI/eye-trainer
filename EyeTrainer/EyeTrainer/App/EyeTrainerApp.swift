@@ -41,16 +41,46 @@ struct EyeTrainerApp: App {
 private final class MainWindowCoordinator {
     static let shared = MainWindowCoordinator()
 
-    weak var window: NSWindow?
+    // 强引用主窗口，避免窗口仍然存在但引用已经失效，导致 WindowGroup 重复创建。
+    private var window: NSWindow?
     var openWindow: OpenWindowAction?
+    private var isOpening = false
 
     func show() {
-        if let window {
+        if let existing = mainWindows().first {
+            register(existing)
+            existing.makeKeyAndOrderFront(nil)
+        } else if let window {
             window.makeKeyAndOrderFront(nil)
         } else {
+            // 快速连续点击时，只允许一个 WindowGroup 打开请求进入系统队列。
+            guard !isOpening else {
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+            isOpening = true
             openWindow?(id: "floating-panel")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.isOpening = false
+                if let window = self?.mainWindows().first {
+                    self?.register(window)
+                }
+            }
         }
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func register(_ window: NSWindow) {
+        let windows = mainWindows()
+        for duplicate in windows.dropFirst() {
+            duplicate.close()
+        }
+        self.window = windows.first ?? window
+        isOpening = false
+    }
+
+    private func mainWindows() -> [NSWindow] {
+        NSApp.windows.filter { $0.title == "练眼 · 训练状态" }
     }
 }
 
@@ -66,7 +96,9 @@ private struct MainWindowContent: View {
 
                 // onAppear 时 SwiftUI 已创建窗口；下一轮主线程事件中保存稳定引用。
                 DispatchQueue.main.async {
-                    MainWindowCoordinator.shared.window = NSApp.keyWindow
+                    if let window = NSApp.windows.first(where: { $0.title == "练眼 · 训练状态" }) {
+                        MainWindowCoordinator.shared.register(window)
+                    }
                 }
             }
     }
