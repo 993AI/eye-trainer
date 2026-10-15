@@ -111,35 +111,40 @@ final class AppViewModel {
         if mode == .auto, xpcBridge.isConnected {
             xpcBridge.pauseTraining()
         }
-        screenDimmingController.restore()
+        // 保留锁屏前的显示基准，避免解锁时把系统暂时的暗态误认为新基准。
+        screenDimmingController.restore(preserveWakeRecovery: true)
     }
 
     private func handleDisplayWake() {
-        // sessionDidBecomeActive 可能在 screensDidWake 之后重复到达；无论当前标记如何，
-        // 都要把显示器后端重新绑定到解锁后的实际屏幕列表。
-        displayIsSleeping = false
+        // sessionDidBecomeActive 可能在 screensDidWake 之后重复到达。解锁后的短暂恢复期内
+        // 先阻止 tick 直接写屏幕，等 WindowServer 稳定后再恢复输出。
+        displayIsSleeping = true
         wakeGeneration += 1
         let generation = wakeGeneration
-        screenDimmingController.invalidateDisplayConfiguration()
+        screenDimmingController.beginDisplayWakeRecovery()
 
-        guard isRunning else { return }
+        guard isRunning else {
+            displayIsSleeping = false
+            screenDimmingController.finishDisplayWakeRecovery()
+            return
+        }
 
-        // WindowServer 在唤醒后需要一点时间重新枚举显示器；先恢复一次，
-        // 再做一次无可见变化的布局检查，只有发现布局改变时才会再次写屏幕。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+        // WindowServer 在唤醒后需要时间恢复显示器 Gamma 和重新枚举屏幕。
+        // 延迟首次写入，并在更晚的时间再检查一次布局，避免捕获到唤醒过程中的暗态曲线。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
             guard let self,
                   generation == self.wakeGeneration,
-                  !self.displayIsSleeping,
                   self.isRunning else { return }
             self.reapplyBrightnessAfterWake()
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.95) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
             guard let self,
                   generation == self.wakeGeneration,
                   !self.displayIsSleeping,
                   self.isRunning else { return }
             self.screenDimmingController.rebindIfDisplayConfigurationChanged()
+            self.screenDimmingController.finishDisplayWakeRecovery()
         }
     }
 
@@ -149,6 +154,7 @@ final class AppViewModel {
             mode == .manual ? manualBrightness : currentBrightness,
             force: true
         )
+        displayIsSleeping = false
 
         if mode == .auto {
             if xpcBridge.isConnected {
@@ -498,6 +504,11 @@ final class ScreenDimmingController {
 
     private var overlayWindows: [NSWindow] = []
     private var originalGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
+    // 锁屏前已经确认过的显示基准。解锁时优先复用它，避免把 WindowServer
+    // 恢复过程中的临时暗态曲线采集成新的“正常”基准。
+    private var wakeRecoveryGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
+    private var wakeRecoveryBackend: DimmingBackend?
+    private var wakeRecoveryPending = false
     private var screenConfigurationSignature = ""
     private var backend: DimmingBackend?
     private var backendConfigurationSignature = ""
@@ -558,13 +569,30 @@ final class ScreenDimmingController {
         }
     }
 
-    func restore() {
-        invalidateDisplayConfiguration()
+    func restore(preserveWakeRecovery: Bool = false) {
+        if preserveWakeRecovery {
+            wakeRecoveryGammaByDisplay = originalGammaByDisplay
+            wakeRecoveryBackend = backend
+            wakeRecoveryPending = true
+        } else {
+            clearWakeRecovery()
+        }
+        invalidateDisplayConfiguration(preserveWakeRecovery: preserveWakeRecovery)
         currentBrightness = 1.0
         isActive = false
     }
 
-    func invalidateDisplayConfiguration() {
+    func beginDisplayWakeRecovery() {
+        // 保留锁屏前快照，但清理窗口和当前输出，让唤醒后的第一次应用重新绑定当前屏幕布局。
+        wakeRecoveryPending = true
+        invalidateDisplayConfiguration(preserveWakeRecovery: true)
+    }
+
+    func finishDisplayWakeRecovery() {
+        clearWakeRecovery()
+    }
+
+    func invalidateDisplayConfiguration(preserveWakeRecovery: Bool = false) {
         cancelPendingOutput()
         restoreGammaBrightness()
         hideOverlayWindows()
@@ -575,6 +603,9 @@ final class ScreenDimmingController {
         overlayNeedsFront = false
         lastAppliedBrightness = nil
         lastAppliedAt = 0
+        if !preserveWakeRecovery && !wakeRecoveryPending {
+            clearWakeRecovery()
+        }
     }
 
     func rebindIfDisplayConfigurationChanged() {
@@ -652,7 +683,11 @@ final class ScreenDimmingController {
         screenConfigurationSignature = ""
         backendConfigurationSignature = displaySignature
 
-        if gammaFailureSignature == displaySignature {
+        if wakeRecoveryPending, let wakeRecoveryBackend {
+            // 解锁前使用的后端优先延续，避免唤醒后无故从遮罩切换到 Gamma，
+            // 或在 Gamma 尚未稳定时重复探测。
+            backend = wakeRecoveryBackend
+        } else if gammaFailureSignature == displaySignature {
             backend = .overlay
         } else {
             // 先固定选择 Gamma；真正写入时若失败，再切换到遮罩并缓存失败布局。
@@ -737,7 +772,9 @@ final class ScreenDimmingController {
 
         let scale = CGGammaValue(currentBrightness)
         for displayID in displayIDs {
-            guard let original = originalGammaByDisplay[displayID] ?? captureGamma(for: displayID) else {
+            guard let original = originalGammaByDisplay[displayID]
+                    ?? wakeRecoveryGammaByDisplay[displayID]
+                    ?? captureGamma(for: displayID) else {
                 restoreGammaBrightness()
                 return false
             }
@@ -805,6 +842,12 @@ final class ScreenDimmingController {
             )
         }
         originalGammaByDisplay.removeAll()
+    }
+
+    private func clearWakeRecovery() {
+        wakeRecoveryGammaByDisplay.removeAll()
+        wakeRecoveryBackend = nil
+        wakeRecoveryPending = false
     }
 
     private func activeDisplayIDs() -> [CGDirectDisplayID] {
