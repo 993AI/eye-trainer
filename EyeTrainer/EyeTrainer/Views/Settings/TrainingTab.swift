@@ -203,25 +203,29 @@ struct TrainingTab: View {
                     }
                 }
                 
-                // 阶梯级数
-                SettingSection(title: "阶梯级数（阶梯曲线）") {
-                    VStack(spacing: 8) {
-                        HStack {
-                            Text("3 级")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Slider(value: Binding(
-                                get: { Double(vm.settings.stepLevels) },
-                                set: { vm.settings.stepLevels = Int($0) }
-                            ), in: 3...10, step: 1)
-                            .frame(width: 200)
-                            Text("10 级")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                // 阶梯级数只对自动模式下的渐变式阶梯曲线生效。
+                if vm.settings.defaultMode == .auto,
+                   vm.settings.transitionStyle == .gradual,
+                   vm.settings.defaultCurve == .stepped {
+                    SettingSection(title: "阶梯级数（阶梯曲线）") {
+                        VStack(spacing: 8) {
+                            HStack {
+                                Text("3 级")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(value: Binding(
+                                    get: { Double(vm.settings.stepLevels) },
+                                    set: { vm.settings.stepLevels = Int($0) }
+                                ), in: 3...10, step: 1)
+                                .frame(width: 200)
+                                Text("10 级")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text("\(vm.settings.stepLevels) 级")
+                                .font(.callout)
+                                .foregroundColor(.accentColor)
                         }
-                        Text("\(vm.settings.stepLevels) 级")
-                            .font(.callout)
-                            .foregroundColor(.accentColor)
                     }
                 }
             }
