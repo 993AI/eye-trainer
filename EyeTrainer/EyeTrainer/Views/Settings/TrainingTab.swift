@@ -134,7 +134,7 @@ struct TrainingTab: View {
                                     .font(.caption)
                                     .foregroundColor(.accentColor)
                             }
-                            Slider(value: $vm.settings.minBrightness, in: 0.05...0.50, step: 0.01)
+                            Slider(value: $vm.settings.minBrightness, in: 0.05...1.00, step: 0.01)
                                 .frame(width: 160)
                         }
                         
@@ -147,14 +147,20 @@ struct TrainingTab: View {
                                     .font(.caption)
                                     .foregroundColor(.accentColor)
                             }
-                            Slider(value: $vm.settings.maxBrightness, in: 0.50...1.00, step: 0.01)
+                            Slider(value: $vm.settings.maxBrightness, in: 0.20...1.00, step: 0.01)
                                 .frame(width: 160)
                         }
                     }
                     .onChange(of: vm.settings.minBrightness) { _, newValue in
-                        // 确保上限不低于下限+5%
-                        if vm.settings.maxBrightness <= newValue + 0.05 {
-                            vm.settings.maxBrightness = min(newValue + 0.10, 1.0)
+                        // 下限不能高于上限；相同值表示固定亮度，不做额外调整。
+                        if vm.settings.maxBrightness < newValue {
+                            vm.settings.maxBrightness = newValue
+                        }
+                    }
+                    .onChange(of: vm.settings.maxBrightness) { _, newValue in
+                        // 上限不能低于下限；相同值表示固定亮度，不做额外调整。
+                        if vm.settings.minBrightness > newValue {
+                            vm.settings.minBrightness = newValue
                         }
                     }
                     }
