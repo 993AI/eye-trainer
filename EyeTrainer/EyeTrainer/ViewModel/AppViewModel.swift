@@ -58,6 +58,7 @@ final class AppViewModel {
     private var trainingElapsedSeconds = 0.0
     private var fallbackGeneration = 0
     private var wakeGeneration = 0
+    private var wakeRecoveryRetryCount = 0
     
     // MARK: - Init
     
@@ -123,12 +124,23 @@ final class AppViewModel {
         displayIsSleeping = true
         wakeGeneration += 1
         let generation = wakeGeneration
+        wakeRecoveryRetryCount = 0
         screenDimmingController.beginDisplayWakeRecovery()
 
         guard isRunning else {
             displayIsSleeping = false
             screenDimmingController.finishDisplayWakeRecovery()
             return
+        }
+
+        if screenDimmingController.wakeRecoveryNeedsFullReset {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self,
+                      generation == self.wakeGeneration,
+                      self.displayIsSleeping,
+                      self.isRunning else { return }
+                self.screenDimmingController.resetForDisplayWakeRecovery()
+            }
         }
 
         // WindowServer 在唤醒后需要时间恢复显示器 Gamma 和重新枚举屏幕。
@@ -146,11 +158,11 @@ final class AppViewModel {
                   !self.displayIsSleeping,
                   self.isRunning else { return }
             self.screenDimmingController.rebindIfDisplayConfigurationChanged()
-            self.screenDimmingController.finishDisplayWakeRecovery()
+            self.verifyDisplayWakeRecovery(generation: generation)
         }
     }
 
-    private func reapplyBrightnessAfterWake() {
+    private func reapplyBrightnessAfterWake(restartTraining: Bool = true) {
         // 先恢复当前画面亮度，再重新对齐训练计时器；XPC 初始 tick 若相同会被输出节流合并。
         screenDimmingController.setDisplayState(
             mode == .manual ? manualBrightness : currentBrightness,
@@ -159,11 +171,43 @@ final class AppViewModel {
         )
         displayIsSleeping = false
 
-        if mode == .auto {
+        if restartTraining, mode == .auto {
             if xpcBridge.isConnected {
                 xpcBridge.startTraining(makeStartRequest(initialElapsedSeconds: trainingElapsedSeconds))
             } else if fallbackTimer == nil {
                 startFallbackAuto(initialElapsedSeconds: trainingElapsedSeconds)
+            }
+        }
+    }
+
+    private func verifyDisplayWakeRecovery(generation: Int) {
+        guard generation == wakeGeneration,
+              !displayIsSleeping,
+              isRunning else { return }
+
+        if screenDimmingController.validateDisplayWakeRecovery() {
+            screenDimmingController.finishDisplayWakeRecovery()
+            return
+        }
+
+        guard wakeRecoveryRetryCount < 2 else {
+            // 最多重置两次，避免在 WindowServer 异常时不断写入显示器。
+            screenDimmingController.finishDisplayWakeRecovery()
+            return
+        }
+
+        wakeRecoveryRetryCount += 1
+        displayIsSleeping = true
+        screenDimmingController.resetForDisplayWakeRecovery()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            guard let self,
+                  generation == self.wakeGeneration,
+                  self.displayIsSleeping,
+                  self.isRunning else { return }
+            self.reapplyBrightnessAfterWake(restartTraining: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                self?.verifyDisplayWakeRecovery(generation: generation)
             }
         }
     }
@@ -203,7 +247,8 @@ final class AppViewModel {
     private func handleXPCEvent(_ event: XPCEvent) {
         switch event.type {
         case .tick:
-            if let tick = event.tick {
+            guard isRunning, let tick = event.tick else { return }
+            do {
                 currentBrightness = tick.currentBrightness
                 currentColorTemperature = tick.currentColorTemperature
                 trainingElapsedSeconds = tick.elapsedSeconds
@@ -323,6 +368,11 @@ final class AppViewModel {
     
     func startTraining() {
         guard !isRunning else { return }
+
+        // 清除上一次训练可能留下的显示输出，确保重新开始时从已知状态建立基准。
+        if !displayIsSleeping {
+            screenDimmingController.restore()
+        }
         
         mode = settings.defaultMode
         selectedCurve = settings.defaultCurve
@@ -355,14 +405,13 @@ final class AppViewModel {
     }
     
     func stopTraining() {
-        guard isRunning else { return }
-
+        let wasRunning = isRunning
         let wasXPCConnected = xpcBridge.isConnected
         isRunning = false
         remainingSeconds = 0
         trainingElapsedSeconds = 0
         stopFallbackTimer()
-        if wasXPCConnected {
+        if wasRunning, wasXPCConnected {
             xpcBridge.stopTraining()
         }
         screenDimmingController.restore()
@@ -572,11 +621,14 @@ final class ScreenDimmingController {
     private var overlayWindows: [NSWindow] = []
     private var temperatureOverlayWindows: [NSWindow] = []
     private var originalGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
+    // 训练会话中首次确认的可信基准。它不会因唤醒、屏幕布局变化或临时输出而被覆盖。
+    private var trustedGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
     // 锁屏前已经确认过的显示基准。解锁时优先复用它，避免把 WindowServer
     // 恢复过程中的临时暗态曲线采集成新的“正常”基准。
     private var wakeRecoveryGammaByDisplay: [CGDirectDisplayID: GammaFormula] = [:]
     private var wakeRecoveryBackend: DimmingBackend?
     private var wakeRecoveryPending = false
+    private var wakeRecoveryNeedsHardReset = false
     private var screenConfigurationSignature = ""
     private var backend: DimmingBackend?
     private var backendConfigurationSignature = ""
@@ -651,8 +703,15 @@ final class ScreenDimmingController {
 
     func restore(preserveWakeRecovery: Bool = false) {
         if preserveWakeRecovery {
-            wakeRecoveryGammaByDisplay = originalGammaByDisplay
+            wakeRecoveryGammaByDisplay = trustedGammaByDisplay
+            for (displayID, original) in originalGammaByDisplay where wakeRecoveryGammaByDisplay[displayID] == nil {
+                wakeRecoveryGammaByDisplay[displayID] = original
+            }
             wakeRecoveryBackend = backend
+            let displayIDs = activeDisplayIDs()
+            wakeRecoveryNeedsHardReset = backend == .gamma
+                && !displayIDs.isEmpty
+                && !displayIDs.allSatisfy { wakeRecoveryGammaByDisplay[$0] != nil }
             wakeRecoveryPending = true
         } else {
             clearWakeRecovery()
@@ -661,12 +720,61 @@ final class ScreenDimmingController {
         currentBrightness = 1.0
         currentColorTemperature = 6500
         isActive = false
+        if !preserveWakeRecovery {
+            trustedGammaByDisplay.removeAll()
+        }
     }
 
     func beginDisplayWakeRecovery() {
         // 保留锁屏前快照，但清理窗口和当前输出，让唤醒后的第一次应用重新绑定当前屏幕布局。
+        // 如果锁屏通知丢失，则从当前仍在使用的可信基准开始；没有可信基准时走完整重置。
+        if wakeRecoveryBackend == nil {
+            wakeRecoveryBackend = backend
+        }
+        if wakeRecoveryGammaByDisplay.isEmpty {
+            wakeRecoveryGammaByDisplay = trustedGammaByDisplay
+            for (displayID, original) in originalGammaByDisplay where wakeRecoveryGammaByDisplay[displayID] == nil {
+                wakeRecoveryGammaByDisplay[displayID] = original
+            }
+        }
+        let displayIDs = activeDisplayIDs()
+        if wakeRecoveryBackend == .gamma,
+           !displayIDs.isEmpty,
+           !displayIDs.allSatisfy({ wakeRecoveryGammaByDisplay[$0] != nil }) {
+            wakeRecoveryNeedsHardReset = true
+        }
         wakeRecoveryPending = true
         invalidateDisplayConfiguration(preserveWakeRecovery: true)
+    }
+
+    var wakeRecoveryNeedsFullReset: Bool {
+        wakeRecoveryNeedsHardReset
+    }
+
+    func resetForDisplayWakeRecovery() {
+        guard wakeRecoveryPending else { return }
+
+        cancelPendingOutput()
+        restoreGammaBrightness()
+        hideOverlayWindows()
+
+        // 当没有可信基准，或校验发现唤醒后的输出仍异常时，恢复系统 ColorSync 状态，
+        // 再重新采集一条新的基准，而不是继续沿用可能已经变暗的曲线。
+        CGDisplayRestoreColorSyncSettings()
+
+        originalGammaByDisplay.removeAll()
+        trustedGammaByDisplay.removeAll()
+        wakeRecoveryGammaByDisplay.removeAll()
+        wakeRecoveryBackend = .gamma
+        wakeRecoveryNeedsHardReset = false
+        screenConfigurationSignature = ""
+        backend = nil
+        backendConfigurationSignature = ""
+        gammaFailureSignature = nil
+        overlayNeedsFront = false
+        lastAppliedBrightness = nil
+        lastAppliedColorTemperature = nil
+        lastAppliedAt = 0
     }
 
     func finishDisplayWakeRecovery() {
@@ -695,7 +803,41 @@ final class ScreenDimmingController {
 
         let displaySignature = configurationSignature(for: NSScreen.screens)
         guard backendConfigurationSignature != displaySignature else { return }
-        setBrightness(currentBrightness, force: true)
+        setDisplayState(
+            currentBrightness,
+            colorTemperature: currentColorTemperature,
+            force: true
+        )
+    }
+
+    func validateDisplayWakeRecovery() -> Bool {
+        guard wakeRecoveryPending, isActive else { return false }
+
+        let displaySignature = configurationSignature(for: NSScreen.screens)
+        guard backendConfigurationSignature == displaySignature else { return false }
+
+        switch backend {
+        case .overlay:
+            return overlayWindows.count == NSScreen.screens.count
+                && temperatureOverlayWindows.count == NSScreen.screens.count
+        case .gamma:
+            let displayIDs = activeDisplayIDs()
+            guard !displayIDs.isEmpty else { return false }
+            return displayIDs.allSatisfy { displayID in
+                guard let baseline = trustedGammaByDisplay[displayID]
+                        ?? wakeRecoveryGammaByDisplay[displayID]
+                        ?? originalGammaByDisplay[displayID],
+                      let actual = captureGamma(for: displayID) else { return false }
+                return gammaOutputMatches(
+                    actual: actual,
+                    baseline: baseline,
+                    brightness: currentBrightness,
+                    colorTemperature: currentColorTemperature
+                )
+            }
+        case nil:
+            return false
+        }
     }
 
     private func requestBrightnessOutput() {
@@ -859,11 +1001,15 @@ final class ScreenDimmingController {
         let scale = currentBrightness
         let temperature = ColorTemperatureEngine.multipliers(for: currentColorTemperature)
         for displayID in displayIDs {
-            guard let original = originalGammaByDisplay[displayID]
+            guard let original = trustedGammaByDisplay[displayID]
                     ?? wakeRecoveryGammaByDisplay[displayID]
+                    ?? originalGammaByDisplay[displayID]
                     ?? captureGamma(for: displayID) else {
                 restoreGammaBrightness()
                 return false
+            }
+            if trustedGammaByDisplay[displayID] == nil {
+                trustedGammaByDisplay[displayID] = original
             }
             originalGammaByDisplay[displayID] = original
 
@@ -951,20 +1097,48 @@ final class ScreenDimmingController {
 
     private func restoreGammaBrightness() {
         for (displayID, original) in originalGammaByDisplay {
+            let baseline = trustedGammaByDisplay[displayID]
+                ?? wakeRecoveryGammaByDisplay[displayID]
+                ?? original
             CGSetDisplayTransferByFormula(
                 displayID,
-                original.redMin, original.redMax, original.redGamma,
-                original.greenMin, original.greenMax, original.greenGamma,
-                original.blueMin, original.blueMax, original.blueGamma
+                baseline.redMin, baseline.redMax, baseline.redGamma,
+                baseline.greenMin, baseline.greenMax, baseline.greenGamma,
+                baseline.blueMin, baseline.blueMax, baseline.blueGamma
             )
         }
         originalGammaByDisplay.removeAll()
+    }
+
+    private func gammaOutputMatches(
+        actual: GammaFormula,
+        baseline: GammaFormula,
+        brightness: Double,
+        colorTemperature: Double
+    ) -> Bool {
+        let temperature = ColorTemperatureEngine.multipliers(for: colorTemperature)
+        let tolerance = 0.035
+
+        func close(_ lhs: CGGammaValue, _ rhs: CGGammaValue) -> Bool {
+            abs(Double(lhs) - Double(rhs)) <= tolerance
+        }
+
+        return close(actual.redMin, gammaValue(baseline.redMin, multipliedBy: brightness * temperature.red))
+            && close(actual.redMax, gammaValue(baseline.redMax, multipliedBy: brightness * temperature.red))
+            && close(actual.greenMin, gammaValue(baseline.greenMin, multipliedBy: brightness * temperature.green))
+            && close(actual.greenMax, gammaValue(baseline.greenMax, multipliedBy: brightness * temperature.green))
+            && close(actual.blueMin, gammaValue(baseline.blueMin, multipliedBy: brightness * temperature.blue))
+            && close(actual.blueMax, gammaValue(baseline.blueMax, multipliedBy: brightness * temperature.blue))
+            && close(actual.redGamma, baseline.redGamma)
+            && close(actual.greenGamma, baseline.greenGamma)
+            && close(actual.blueGamma, baseline.blueGamma)
     }
 
     private func clearWakeRecovery() {
         wakeRecoveryGammaByDisplay.removeAll()
         wakeRecoveryBackend = nil
         wakeRecoveryPending = false
+        wakeRecoveryNeedsHardReset = false
     }
 
     private func activeDisplayIDs() -> [CGDirectDisplayID] {
